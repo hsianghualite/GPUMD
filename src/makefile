@@ -15,7 +15,7 @@ MPI_CC  = mpicxx
 ###########################################################
 CUDA_ARCH = -arch=sm_89
 
-MPI_HOME = /opt/apps/mpi/openmpi-5.0.7-cuda12.4-classic
+MPI_HOME = /mpipath/openmpi-5.0.7-cuda12.4-classic
 MPI_INC  = -I$(MPI_HOME)/include
 MPI_LIB  = -L$(MPI_HOME)/lib -lmpi
 
