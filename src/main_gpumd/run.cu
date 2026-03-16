@@ -331,9 +331,10 @@ void Run::perform_a_run()
 
   printf("Time used for this run = %g second.\n", time_used.count());
   double run_speed = atom.number_of_atoms * (number_of_steps * 1.0 / time_used.count());
-  printf("Speed of this run = %g atom*step/second.\n", run_speed);
+  double speed_ns_day = (global_time * TIME_UNIT_CONVERSION / 1000000.0) * (86400.0 / time_used.count());
+  printf("Speed of this run = %g atom*step/second (%g ns/day).\n", run_speed, speed_ns_day);
   print_line_2();
-
+  
   measure.finalize(atom, box, integrate, number_of_steps, time_step, integrate.temperature2);
 
   electron_stop.finalize();
