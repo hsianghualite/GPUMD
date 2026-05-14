@@ -48,12 +48,16 @@ SNES::SNES(Parameters& para, Fitness* fitness_function)
   number_of_variables = para.number_of_variables;
   population_size = para.population_size;
   const int N = population_size * number_of_variables;
-  int num = number_of_variables;
-  if (para.version != 3) {
-    num /= para.num_types;
-  }
+  int num = number_of_variables / para.num_types;
   eta_sigma = (3.0f + std::log(num * 1.0f)) / (5.0f * sqrt(num * 1.0f)) / 2.0f;
-  fitness.resize(population_size * 7 * (para.num_types + 1));
+  fitness_total.resize(population_size * (para.num_types + 1));
+  fitness_L1.resize(population_size * (para.num_types + 1));
+  fitness_L2.resize(population_size * (para.num_types + 1));
+  fitness_energy.resize(population_size * (para.num_types + 1));
+  fitness_force.resize(population_size * (para.num_types + 1));
+  fitness_virial.resize(population_size * (para.num_types + 1));
+  fitness_charge.resize(population_size * (para.num_types + 1));
+  fitness_bec.resize(population_size * (para.num_types + 1));
   index.resize(population_size * (para.num_types + 1));
   population.resize(N);
   mu.resize(number_of_variables);
@@ -126,7 +130,7 @@ void SNES::initialize_mu_and_sigma(Parameters& para)
     if (para.charge_mode && para.flip_charge) {
       const int num1 = (para.dim + 2) * para.num_neurons1;
       int num2 = 0;
-      if (para.charge_mode >= 4) {
+      if (para.charge_mode >= 3) {
         num2 = para.num_neurons1;
       }
       for (int t = 0; t < para.num_types; ++t) {
@@ -200,11 +204,11 @@ void SNES::initialize_mu_and_sigma_fine_tune(Parameters& para)
           int element_index_2 = element_map[para.atomic_numbers[t2] - 1];
           int t12 = element_index_1 * NUM89 + element_index_2;
           mu[count] = restart_mu[nk * NUM89 * NUM89 + t12 + num_ann];
-#ifdef FINE_TUNE_DESCRIPTOR
-          sigma[count] = restart_sigma[nk * NUM89 * NUM89 + t12 + num_ann];
-#else
-          sigma[count] = 0.0f * restart_sigma[nk * NUM89 * NUM89 + t12 + num_ann];
-#endif
+          if (para.fine_tune_descriptor) {
+            sigma[count] = restart_sigma[nk * NUM89 * NUM89 + t12 + num_ann];
+          } else {
+            sigma[count] = 0.0f;
+          }
           ++count;
         }
       }
@@ -255,19 +259,15 @@ void SNES::find_type_of_variable(Parameters& para)
   int offset = 0;
 
   // NN part
-  if (para.version != 3) {
-    int num_ann = (para.train_mode == 2) ? 2 : 1;
-    for (int ann = 0; ann < num_ann; ++ann) {
-      for (int t = 0; t < para.num_types; ++t) {
-        for (int n = 0; n < para.number_of_variables_ann_1; ++n) {
-          type_of_variable[n + offset] = t;
-        }
-        offset += para.number_of_variables_ann_1;
+  int num_ann = (para.train_mode == 2) ? 2 : 1;
+  for (int ann = 0; ann < num_ann; ++ann) {
+    for (int t = 0; t < para.num_types; ++t) {
+      for (int n = 0; n < para.number_of_variables_ann_1; ++n) {
+        type_of_variable[n + offset] = t;
       }
-      offset += para.charge_mode ? 2 : 1; // the bias
+      offset += para.number_of_variables_ann_1;
     }
-  } else {
-    offset += para.number_of_variables_ann_1 + 1;
+    offset += para.charge_mode ? 2 : 1; // the bias
   }
 
   // descriptor part
@@ -320,18 +320,37 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
   if (para.prediction == 0) {
     if (para.train_mode == 0 || para.train_mode == 3) {
       if (mpi_rank == 0) {
-        printf(
-          "%-8s%-11s%-11s%-11s%-13s%-13s%-13s%-13s%-13s%-13s\n",
-          "Step",
-          "Total-Loss",
-          "L1Reg-Loss",
-          "L2Reg-Loss",
-          "RMSE-E-Train",
-          "RMSE-F-Train",
-          "RMSE-V-Train",
-          "RMSE-E-Test",
-          "RMSE-F-Test",
-          "RMSE-V-Test");
+        if (!para.charge_mode) {
+          printf(
+            "%-8s%-11s%-11s%-11s%-13s%-13s%-13s%-13s%-13s%-13s\n",
+            "Step",
+            "Total-Loss",
+            "L1Reg-Loss",
+            "L2Reg-Loss",
+            "RMSE-E-Train",
+            "RMSE-F-Train",
+            "RMSE-V-Train",
+            "RMSE-E-Test",
+            "RMSE-F-Test",
+            "RMSE-V-Test");
+        } else {
+          printf(
+            "%-8s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s%-9s\n",
+            "Step",
+            "Total",
+            "L1Reg",
+            "L2Reg",
+            "E-Train",
+            "F-Train",
+            "V-Train",
+            "Q-Train",
+            "Z-Train",
+            "E-Test",
+            "F-Test",
+            "V-Test",
+            "Q-Test",
+            "Z-Test");
+        }
       }
     } else {
       if (mpi_rank == 0) {
@@ -363,29 +382,37 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
           0,
           MPI_COMM_WORLD);
       }
-      fitness_function->compute(n, para, population.data(), fitness.data());
+      fitness_function->compute(
+        n,
+        para,
+        population.data(),
+        fitness_energy.data(),
+        fitness_force.data(),
+        fitness_virial.data(),
+        fitness_charge.data(),
+        fitness_bec.data());
 
       if (mpi_size > 1) {
-        int count = population_size * 7 * (para.num_types + 1);
-        std::vector<float> fitness_global(count);
+        const int count = population_size * (para.num_types + 1);
         float weight = 1.0f;
         if (para.num_train_structures_total > 0) {
           weight = static_cast<float>(para.num_train_structures_local) /
                    static_cast<float>(para.num_train_structures_total);
         }
-        for (int i = 0; i < count; ++i) {
-          fitness[i] *= weight;
-        }
-        MPI_Allreduce(
-          fitness.data(),
-          fitness_global.data(),
-          count,
-          MPI_FLOAT,
-          MPI_SUM,
-          MPI_COMM_WORLD);
-        for (int i = 0; i < count; ++i) {
-          fitness[i] = fitness_global[i];
-        }
+        auto reduce_fitness = [count, weight](std::vector<float>& values) {
+          std::vector<float> global_values(count);
+          for (int i = 0; i < count; ++i) {
+            values[i] *= weight;
+          }
+          MPI_Allreduce(
+            values.data(), global_values.data(), count, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+          values.swap(global_values);
+        };
+        reduce_fitness(fitness_energy);
+        reduce_fitness(fitness_force);
+        reduce_fitness(fitness_virial);
+        reduce_fitness(fitness_charge);
+        reduce_fitness(fitness_bec);
       }
 
       if (para.version != 3) {
@@ -398,15 +425,12 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
 
       if (mpi_rank == 0) {
         int best_index = index[para.num_types * population_size];
-        float fitness_total = fitness[0 + (7 * para.num_types + 0) * population_size];
-        float fitness_L1 = fitness[best_index + (7 * para.num_types + 1) * population_size];
-        float fitness_L2 = fitness[best_index + (7 * para.num_types + 2) * population_size];
         fitness_function->report_error(
           para,
           n,
-          fitness_total,
-          fitness_L1,
-          fitness_L2,
+          fitness_total[para.num_types * population_size + 0],
+          fitness_L1[para.num_types * population_size + best_index],
+          fitness_L2[para.num_types * population_size + best_index],
           population.data() + number_of_variables * best_index);
 
         update_mu_and_sigma(para);
@@ -431,16 +455,12 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
     std::vector<std::string> tokens;
     tokens = get_tokens(input);
     int num_lines_to_be_skipped = 5;
-    if (
-      tokens[0] == "nep3_zbl" || 
+    if ( 
       tokens[0] == "nep4_zbl" || 
-      tokens[0] == "nep3_zbl_temperature" ||
       tokens[0] == "nep4_zbl_temperature" || 
       tokens[0] == "nep4_zbl_charge1" ||
       tokens[0] == "nep4_zbl_charge2" ||
-      tokens[0] == "nep4_zbl_charge3" ||
-      tokens[0] == "nep4_zbl_charge4" ||
-      tokens[0] == "nep4_zbl_charge5") {
+      tokens[0] == "nep4_zbl_charge3") {
       num_lines_to_be_skipped = 6;
     }
 
@@ -564,12 +584,12 @@ void SNES::regularize_NEP4(Parameters& para)
     for (int p = 0; p < population_size; ++p) {
       float cost_L1 = para.lambda_1 * cost_L1reg[p] / num_variables;
       float cost_L2 = para.lambda_2 * sqrt(cost_L2reg[p] / num_variables);
-      fitness[p + (7 * t + 0) * population_size] =
-        cost_L1 + cost_L2 + fitness[p + (7 * t + 3) * population_size] +
-        fitness[p + (7 * t + 4) * population_size] + fitness[p + (7 * t + 5) * population_size] +
-        fitness[p + (7 * t + 6) * population_size];
-      fitness[p + (7 * t + 1) * population_size] = cost_L1;
-      fitness[p + (7 * t + 2) * population_size] = cost_L2;
+      fitness_total[p + t * population_size] =
+        cost_L1 + cost_L2 + fitness_energy[p + t * population_size] +
+        fitness_force[p + t * population_size] + fitness_virial[p + t * population_size] +
+        fitness_charge[p + t * population_size] + fitness_bec[p + t * population_size];
+      fitness_L1[p + t * population_size] = cost_L1;
+      fitness_L2[p + t * population_size] = cost_L2;
     }
   }
 }
@@ -621,12 +641,12 @@ void SNES::regularize(Parameters& para)
     float cost_L2 = para.lambda_2 * sqrt(cost_L2reg[p] / number_of_variables);
 
     for (int t = 0; t <= para.num_types; ++t) {
-      fitness[p + (7 * t + 0) * population_size] =
-        cost_L1 + cost_L2 + fitness[p + (7 * t + 3) * population_size] +
-        fitness[p + (7 * t + 4) * population_size] + fitness[p + (7 * t + 5) * population_size] +
-        fitness[p + (7 * t + 6) * population_size];
-      fitness[p + (7 * t + 1) * population_size] = cost_L1;
-      fitness[p + (7 * t + 2) * population_size] = cost_L2;
+      fitness_total[p + t * population_size] =
+        cost_L1 + cost_L2 + fitness_energy[p + t * population_size] +
+        fitness_force[p + t * population_size] + fitness_virial[p + t * population_size] +
+        fitness_charge[p + t * population_size] + fitness_bec[p + t * population_size];
+      fitness_L1[p + t * population_size] = cost_L1;
+      fitness_L2[p + t * population_size] = cost_L2;
     }
   }
 }
@@ -654,7 +674,7 @@ void SNES::sort_population(Parameters& para)
     }
 
     insertion_sort(
-      fitness.data() + t * population_size * 7,
+      fitness_total.data() + t * population_size,
       index.data() + t * population_size,
       population_size);
   }
@@ -684,7 +704,7 @@ static __global__ void gpu_update_mu_and_sigma(
     }
     const float sigma = g_sigma[v];
     g_mu[v] += sigma * gradient_mu;
-    g_sigma[v] = sigma * exp(eta_sigma * gradient_sigma);
+    g_sigma[v] = fminf(sigma * exp(eta_sigma * gradient_sigma), 1.0f);
   }
 }
 

@@ -118,6 +118,12 @@ Bibliography
    | Journal of Chemical Physics **157**, 114801 (2022)
    | DOI: `10.1063/5.0106617  <https://doi.org/ 10.1063/5.0106617>`_
 
+.. [Fan2026]
+   | Zheyong Fan, Benrui Tang, Esmée Berger, Ethan Berger, Erik Fransson, Ke Xu, Zihan Yan, Zhoulin Liu, Zichen Song, Haikuan Dong, Shunda Chen, Lei Li, Ziliang Wang, Yizhou Zhu, Julia Wiktor, and Paul Erhart
+   | *qNEP: A Highly Efficient Neuroevolution Potential with Dynamic Charges for Large-Scale Atomistic Simulations*
+   | Journal of Chemical Theory and Computation **0**, 0 (2026)
+   | DOI: `10.1021/acs.jctc.6c00146  <https://doi.org/10.1021/acs.jctc.6c00146>`_
+
 .. [Freitas2016]
    | Rodrigo Freitas, Mark Asta, Maurice de Koning
    | *Nonequilibrium free-energy calculation of solids using LAMMPS*
@@ -240,6 +246,12 @@ Bibliography
    | Nature Communications *15*, 10208 (2024)
    | DOI: `10.1038/s41467-024-54554-x <https://doi.org/10.1038/s41467-024-54554-x>`_
 
+.. [Song2024b]
+   | Zichen Song, Jian Han, Graeme Henkelman, Lei Li
+   | *Charge-Optimized Electrostatic Interaction Atom-Centered Neural Network Algorithm*
+   | Journal of Chemical Theory and Computation **20**, 2088-2097 (2024)
+   | DOI: `10.1021/acs.jctc.3c01254 <https://doi.org/10.1021/acs.jctc.3c01254>`_
+
 .. [Tersoff1988]
    | Jerry Tersoff
    | *New empirical approach for the structure and energy of covalent systems*
@@ -279,6 +291,12 @@ Bibliography
    | *Non-equilibrium free-energy calculation of phase-boundaries using LAMMPS*
    | Computational Materials Science **207**, 111275 (2022)
    | DOI: `10.1016/j.commatsci.2022.111275 <https://doi.org/10.1016/j.commatsci.2022.111275>`_
+
+.. [Cheng2025]
+   | Bingqing Cheng
+   | *Latent Ewald summation for machine learning of long-range interactions*
+   | npj Computational Materials **11**, 80 (2025)
+   | DOI: `10.1038/s41524-025-01577-7 <https://doi.org/10.1038/s41524-025-01577-7>`_
 
 .. [Podryabinkin2023]
    | Evgeny Podryabinkin, Kamil Garifullin, Alexander Shapeev, and Ivan Novikov
@@ -352,8 +370,14 @@ Bibliography
    | The Journal of chemical physics, 138(4), (2013).
    | DOI: `10.1063/1.4774084 <https://doi.org/10.1063/1.4774084>`_
 
-.. [Bu2025]
+.. [Jiang2025]
+   | Wenwu Jiang, Ting Liang, Hekai Bu, Jianbin Xu, and Wengen Ouyang
+   | *Moiré-driven interfacial thermal transport in twisted transition metal dichalcogenides*
+   | ACS Nano **19**, 16287 (2025)
+   | DOI: `10.1021/acsnano.4c12148 <https://doi.org/10.1021/acsnano.4c12148>`_
+
+.. [Bu2026]
    | Hekai Bu, Wenwu Jiang, Penghua Ying, Ting Liang, Zheyong Fan, and Wengen Ouyang
-   | *Accurate modeling of LEGO-like vdW heterostructures: integrating machine learned with anisotropic interlayer potentials*
-   | arXiv, 2504, 12985 (2025)
-   | DOI: `10.48550/arXiv.2504.12985 <https://doi.org/10.48550/arXiv.2504.12985>`_
+   | *Modular hybrid machine learning and physics-based potentials for scalable modeling of Van der Waals heterostructures*
+   | J. Mech. Phys. Solids **210**, 106540 (2026)
+   | DOI: `10.1016/j.jmps.2026.106540 <https://doi.org/10.1016/j.jmps.2026.106540>`_

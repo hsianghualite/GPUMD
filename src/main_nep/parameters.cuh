@@ -34,13 +34,17 @@ public:
   int save_potential_format;   // format of checkpoint nep.txt file name
   int save_potential_restart;  // if restart files should be written or not. 0=no, 1=yes
   int num_neurons1;       // number of nuerons in the 1st hidden layer (only one hidden layer)
+  int num_neurons2;       // number of nuerons in the 2nd hidden layer (only two hidden layers)
+  int num_hidden_layers;  // number of hidden layers
   int basis_size_radial;  // for nep3
   int basis_size_angular; // for nep3
   int n_max_radial;       // maximum order of the radial Chebyshev polynomials
   int n_max_angular;      // maximum order of the angular Chebyshev polynomials
   int L_max;              // maximum order of the 3body spherical harmonics
-  int L_max_4body;        // maximum order of the 4body spherical harmonics
-  int L_max_5body;        // maximum order of the 5body spherical harmonics
+  int has_q_222;          // has q_222
+  int has_q_1111;         // has q_1111
+  int has_q_112;          // has q_112
+  int has_q_1122;         // has q_1122
   float lambda_1;         // weight parameter for L1 regularization loss
   float lambda_2;         // weight parameter for L2 regularization loss
   float lambda_e;         // weight parameter for energy RMSE loss
@@ -48,6 +52,7 @@ public:
   float lambda_v;         // weight parameter for virial RMSE loss
   float lambda_shear;     // extra weight parameter for shear virial
   float lambda_q;         // weight for global charge
+  float lambda_z;         // weight for BEC
   float force_delta;      // a parameters used to modify the force loss
   bool enable_zbl;        // true for inlcuding the universal ZBL potential
   bool flexible_zbl;      // true for inlcuding the flexible ZBL potential
@@ -65,6 +70,7 @@ public:
   bool has_bec = false; // check if there are target BEC values
   int flip_charge = 0; // 1 for flipping charges upon restarting
   int fine_tune = 0; // fine_tune option; 0=no, 1=yes
+  int fine_tune_descriptor = 1; // fine-tune descriptor; 0=no, 1=yes
   std::string fine_tune_nep_txt = "";
   std::string fine_tune_nep_restart = "";
 
@@ -152,6 +158,7 @@ private:
   void parse_lambda_f(const char** param, int num_param);
   void parse_lambda_v(const char** param, int num_param);
   void parse_lambda_q(const char** param, int num_param);
+  void parse_lambda_z(const char** param, int num_param);
   void parse_lambda_shear(const char** param, int num_param);
   void parse_force_delta(const char** param, int num_param);
   void parse_batch(const char** param, int num_param);
