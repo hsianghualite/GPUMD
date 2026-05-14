@@ -34,13 +34,17 @@ public:
   int save_potential_format;   // format of checkpoint nep.txt file name
   int save_potential_restart;  // if restart files should be written or not. 0=no, 1=yes
   int num_neurons1;       // number of nuerons in the 1st hidden layer (only one hidden layer)
+  int num_neurons2;       // number of nuerons in the 2nd hidden layer (only two hidden layers)
+  int num_hidden_layers;  // number of hidden layers
   int basis_size_radial;  // for nep3
   int basis_size_angular; // for nep3
   int n_max_radial;       // maximum order of the radial Chebyshev polynomials
   int n_max_angular;      // maximum order of the angular Chebyshev polynomials
   int L_max;              // maximum order of the 3body spherical harmonics
-  int L_max_4body;        // maximum order of the 4body spherical harmonics
-  int L_max_5body;        // maximum order of the 5body spherical harmonics
+  int has_q_222;          // has q_222
+  int has_q_1111;         // has q_1111
+  int has_q_112;          // has q_112
+  int has_q_1122;         // has q_1122
   float lambda_1;         // weight parameter for L1 regularization loss
   float lambda_2;         // weight parameter for L2 regularization loss
   float lambda_e;         // weight parameter for energy RMSE loss
