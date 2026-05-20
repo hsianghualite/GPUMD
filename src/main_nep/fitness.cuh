@@ -29,6 +29,7 @@ public:
   Fitness(Parameters& para);
   ~Fitness();
   void compute(const int generation, Parameters& para, const float*, float*, float*, float*, float*, float*);
+  float get_train_weight(const int generation, Parameters& para) const;
   void report_error(
     Parameters& para,
     const int generation,
@@ -47,6 +48,8 @@ protected:
   FILE* fid_loss_out = NULL;
   std::unique_ptr<Potential> potential;
   std::vector<std::vector<Dataset>> train_set;
+  std::vector<int> batch_train_counts;
+  std::vector<int> batch_total_counts;
   std::vector<Dataset> test_set;
   void output(
     bool is_stress,

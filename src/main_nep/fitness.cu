@@ -51,27 +51,10 @@ Fitness::Fitness(Parameters& para)
   int total_train_structures = static_cast<int>(structures_train_all.size());
   para.num_train_structures_total = total_train_structures;
 
-  int base = 0;
-  int remainder = 0;
-  if (mpi_size > 0) {
-    base = total_train_structures / mpi_size;
-    remainder = total_train_structures % mpi_size;
-  }
-  int local_count = base + (mpi_rank < remainder ? 1 : 0);
-  int start_index = mpi_rank * base + (mpi_rank < remainder ? mpi_rank : remainder);
-  int end_index = start_index + local_count;
-  para.num_train_structures_local = local_count;
-
-  std::vector<Structure> structures_train;
-  structures_train.reserve(local_count);
-  for (int i = start_index; i < end_index; ++i) {
-    structures_train.push_back(structures_train_all[i]);
-  }
-
-  if (structures_train.empty()) {
+  if (structures_train_all.empty()) {
     num_batches = 0;
   } else {
-    num_batches = (structures_train.size() - 1) / para.batch_size + 1;
+    num_batches = (structures_train_all.size() - 1) / para.batch_size + 1;
   }
   if (para.mpi_rank == 0) {
     printf("Number of devices = %d\n", deviceCount);
@@ -79,7 +62,7 @@ Fitness::Fitness(Parameters& para)
   }
   int batch_size_old = para.batch_size;
   if (num_batches > 0) {
-    para.batch_size = (structures_train.size() - 1) / num_batches + 1;
+    para.batch_size = (structures_train_all.size() - 1) / num_batches + 1;
     if (batch_size_old != para.batch_size) {
       if (para.mpi_rank == 0) {
         printf("Hello, I changed the batch_size from %d to %d.\n", batch_size_old, para.batch_size);
@@ -88,21 +71,42 @@ Fitness::Fitness(Parameters& para)
   }
 
   train_set.resize(num_batches);
+  batch_train_counts.resize(num_batches, 0);
+  batch_total_counts.resize(num_batches, 0);
   for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
     train_set[batch_id].resize(deviceCount);
   }
   int count = 0;
+  para.num_train_structures_local = 0;
   for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
-    const int batch_size_minimal = structures_train.size() / num_batches;
+    const int batch_size_minimal = structures_train_all.size() / num_batches;
     const bool is_larger_batch =
-      batch_id + batch_size_minimal * num_batches < static_cast<int>(structures_train.size());
+      batch_id + batch_size_minimal * num_batches < static_cast<int>(structures_train_all.size());
     const int batch_size = is_larger_batch ? batch_size_minimal + 1 : batch_size_minimal;
     int batch_start = count;
     int batch_end = count + batch_size;
     count = batch_end;
+    batch_total_counts[batch_id] = batch_size;
+    int local_batch_start = batch_start;
+    int local_batch_end = batch_start;
+    if (mpi_size > 0) {
+      const int local_batch_size_minimal = batch_size / mpi_size;
+      const int local_batch_remainder = batch_size % mpi_size;
+      const int local_batch_count =
+        local_batch_size_minimal + (mpi_rank < local_batch_remainder ? 1 : 0);
+      local_batch_start =
+        batch_start + mpi_rank * local_batch_size_minimal +
+        (mpi_rank < local_batch_remainder ? mpi_rank : local_batch_remainder);
+      local_batch_end = local_batch_start + local_batch_count;
+    }
+    batch_train_counts[batch_id] = local_batch_end - local_batch_start;
+    para.num_train_structures_local += batch_train_counts[batch_id];
     if (para.mpi_rank == 0) {
       printf("\nBatch %d:\n", batch_id);
       printf("Number of configurations = %d.\n", batch_size);
+    }
+    if (batch_train_counts[batch_id] == 0) {
+      continue;
     }
     for (int device_id = 0; device_id < deviceCount; ++device_id) {
       if (para.mpi_rank == 0) {
@@ -111,7 +115,7 @@ Fitness::Fitness(Parameters& para)
       }
       CHECK(gpuSetDevice(para.cuda_device_id + device_id));
       train_set[batch_id][device_id].construct(
-        para, structures_train, batch_start, batch_end, device_id);
+        para, structures_train_all, local_batch_start, local_batch_end, device_id);
       if (para.mpi_rank == 0) {
         print_line_2();
       }
@@ -150,6 +154,9 @@ Fitness::Fitness(Parameters& para)
     max_NN_angular = test_set[0].max_NN_angular;
   }
   for (int n = 0; n < num_batches; ++n) {
+    if (batch_train_counts[n] == 0) {
+      continue;
+    }
     if (train_set[n][0].N > N) {
       N = train_set[n][0].N;
     };
@@ -224,19 +231,22 @@ void Fitness::compute(
   int deviceCount = (para.mpi_size > 1) ? 1 : deviceCount_all;
   int population_iter = (para.population_size - 1) / deviceCount + 1;
   const int fitness_count = para.population_size * (para.num_types + 1);
+  std::fill(fitness_energy, fitness_energy + fitness_count, 0.0f);
+  std::fill(fitness_force, fitness_force + fitness_count, 0.0f);
+  std::fill(fitness_virial, fitness_virial + fitness_count, 0.0f);
+  std::fill(fitness_charge, fitness_charge + fitness_count, 0.0f);
+  std::fill(fitness_bec, fitness_bec + fitness_count, 0.0f);
 
   if (num_batches == 0 || !potential) {
-    std::fill(fitness_energy, fitness_energy + fitness_count, 0.0f);
-    std::fill(fitness_force, fitness_force + fitness_count, 0.0f);
-    std::fill(fitness_virial, fitness_virial + fitness_count, 0.0f);
-    std::fill(fitness_charge, fitness_charge + fitness_count, 0.0f);
-    std::fill(fitness_bec, fitness_bec + fitness_count, 0.0f);
     return;
   }
 
   if (generation == 0) {
     std::vector<float> dummy_solution(para.number_of_variables * deviceCount, para.initial_para);
     for (int n = 0; n < num_batches; ++n) {
+      if (batch_train_counts[n] == 0) {
+        continue;
+      }
       potential->find_force(
         para,
         dummy_solution.data(),
@@ -247,40 +257,50 @@ void Fitness::compute(
     }
   } else {
     int batch_id = generation % num_batches;
-    bool calculate_neighbor = (num_batches > 1) || (generation % 100 == 0);
-    for (int n = 0; n < population_iter; ++n) {
-      const float* individual = population + deviceCount * n * para.number_of_variables;
-      potential->find_force(
-        para, individual, train_set[batch_id], false, calculate_neighbor, deviceCount);
-      for (int m = 0; m < deviceCount; ++m) {
-        float energy_shift_per_structure_not_used;
-        auto rmse_energy_array = train_set[batch_id][m].get_rmse_energy(
-          para, energy_shift_per_structure_not_used, true, true, m);
-        auto rmse_force_array = train_set[batch_id][m].get_rmse_force(para, true, m);
-        auto rmse_virial_array = train_set[batch_id][m].get_rmse_virial(para, true, m);
-        auto rmse_charge_array = train_set[batch_id][m].get_rmse_charge(para, m);
-        auto rmse_bec_array = train_set[batch_id][m].get_rmse_bec(para, m);
+    if (batch_train_counts[batch_id] == 0) {
+      if (!para.use_full_batch) {
+        return;
+      }
+    } else {
+      bool calculate_neighbor = (num_batches > 1) || (generation % 100 == 0);
+      for (int n = 0; n < population_iter; ++n) {
+        const float* individual = population + deviceCount * n * para.number_of_variables;
+        potential->find_force(
+          para, individual, train_set[batch_id], false, calculate_neighbor, deviceCount);
+        for (int m = 0; m < deviceCount; ++m) {
+          float energy_shift_per_structure_not_used;
+          auto rmse_energy_array = train_set[batch_id][m].get_rmse_energy(
+            para, energy_shift_per_structure_not_used, true, true, m);
+          auto rmse_force_array = train_set[batch_id][m].get_rmse_force(para, true, m);
+          auto rmse_virial_array = train_set[batch_id][m].get_rmse_virial(para, true, m);
+          auto rmse_charge_array = train_set[batch_id][m].get_rmse_charge(para, m);
+          auto rmse_bec_array = train_set[batch_id][m].get_rmse_bec(para, m);
 
-        for (int t = 0; t <= para.num_types; ++t) {
-          fitness_energy[deviceCount * n + m + t * para.population_size] =
-            para.lambda_e * rmse_energy_array[t];
-          fitness_force[deviceCount * n + m + t * para.population_size] =
-            para.lambda_f * rmse_force_array[t];
-          fitness_virial[deviceCount * n + m + t * para.population_size] =
-            para.lambda_v * rmse_virial_array[t];
-          fitness_charge[deviceCount * n + m + t * para.population_size] =
-            para.lambda_q * rmse_charge_array[t];
-          fitness_bec[deviceCount * n + m + t * para.population_size] =
-            para.lambda_z * rmse_bec_array[t];
+          for (int t = 0; t <= para.num_types; ++t) {
+            fitness_energy[deviceCount * n + m + t * para.population_size] =
+              para.lambda_e * rmse_energy_array[t];
+            fitness_force[deviceCount * n + m + t * para.population_size] =
+              para.lambda_f * rmse_force_array[t];
+            fitness_virial[deviceCount * n + m + t * para.population_size] =
+              para.lambda_v * rmse_virial_array[t];
+            fitness_charge[deviceCount * n + m + t * para.population_size] =
+              para.lambda_q * rmse_charge_array[t];
+            fitness_bec[deviceCount * n + m + t * para.population_size] =
+              para.lambda_z * rmse_bec_array[t];
+          }
         }
       }
     }
+    bool calculate_neighbor = (num_batches > 1) || (generation % 100 == 0);
 
     if (para.use_full_batch) {
-      int count_batch = 0;
+      int count_batch = batch_train_counts[generation % num_batches] == 0 ? -1 : 0;
       for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
         if (batch_id == generation % num_batches) {
           continue; // skip the batch that has already been calculated
+        }
+        if (batch_train_counts[batch_id] == 0) {
+          continue;
         }
         ++count_batch;
         for (int n = 0; n < population_iter; ++n) {
@@ -332,6 +352,27 @@ void Fitness::compute(
       }
     }
   }
+}
+
+float Fitness::get_train_weight(const int generation, Parameters& para) const
+{
+  if (para.use_full_batch) {
+    if (para.num_train_structures_total == 0) {
+      return 0.0f;
+    }
+    return static_cast<float>(para.num_train_structures_local) /
+           static_cast<float>(para.num_train_structures_total);
+  }
+
+  if (num_batches == 0) {
+    return 0.0f;
+  }
+  const int batch_id = generation % num_batches;
+  if (batch_total_counts[batch_id] == 0) {
+    return 0.0f;
+  }
+  return static_cast<float>(batch_train_counts[batch_id]) /
+         static_cast<float>(batch_total_counts[batch_id]);
 }
 
 void Fitness::output(

@@ -394,11 +394,7 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
 
       if (mpi_size > 1) {
         const int count = population_size * (para.num_types + 1);
-        float weight = 1.0f;
-        if (para.num_train_structures_total > 0) {
-          weight = static_cast<float>(para.num_train_structures_local) /
-                   static_cast<float>(para.num_train_structures_total);
-        }
+        float weight = fitness_function->get_train_weight(n, para);
         auto reduce_fitness = [count, weight](std::vector<float>& values) {
           std::vector<float> global_values(count);
           for (int i = 0; i < count; ++i) {
