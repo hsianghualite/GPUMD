@@ -71,6 +71,12 @@ Fitness::Fitness(Parameters& para)
   }
 
   train_set.resize(num_batches);
+  if (para.mpi_rank == 0 && para.mpi_size > 1) {
+    train_set_report.resize(num_batches);
+    for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
+      train_set_report[batch_id].resize(1);
+    }
+  }
   batch_train_counts.resize(num_batches, 0);
   batch_total_counts.resize(num_batches, 0);
   for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
@@ -106,6 +112,11 @@ Fitness::Fitness(Parameters& para)
       printf("Number of configurations = %d.\n", batch_size);
     }
     if (batch_train_counts[batch_id] == 0) {
+      if (para.mpi_rank == 0 && para.mpi_size > 1) {
+        CHECK(gpuSetDevice(para.cuda_device_id));
+        train_set_report[batch_id][0].construct(
+          para, structures_train_all, batch_start, batch_end, 0);
+      }
       continue;
     }
     for (int device_id = 0; device_id < deviceCount; ++device_id) {
@@ -119,6 +130,11 @@ Fitness::Fitness(Parameters& para)
       if (para.mpi_rank == 0) {
         print_line_2();
       }
+    }
+    if (para.mpi_rank == 0 && para.mpi_size > 1) {
+      CHECK(gpuSetDevice(para.cuda_device_id));
+      train_set_report[batch_id][0].construct(
+        para, structures_train_all, batch_start, batch_end, 0);
     }
   }
 
@@ -155,6 +171,33 @@ Fitness::Fitness(Parameters& para)
   }
   for (int n = 0; n < num_batches; ++n) {
     if (batch_train_counts[n] == 0) {
+      if (para.mpi_rank != 0 || para.mpi_size == 1) {
+        continue;
+      }
+      if (train_set_report[n][0].N > N) {
+        N = train_set_report[n][0].N;
+      };
+      if (train_set_report[n][0].Nc > Nc) {
+        Nc = train_set_report[n][0].Nc;
+      };
+      if (
+        train_set_report[n][0].N * train_set_report[n][0].max_NN_radial >
+        N_times_max_NN_radial) {
+        N_times_max_NN_radial =
+          train_set_report[n][0].N * train_set_report[n][0].max_NN_radial;
+      };
+      if (
+        train_set_report[n][0].N * train_set_report[n][0].max_NN_angular >
+        N_times_max_NN_angular) {
+        N_times_max_NN_angular =
+          train_set_report[n][0].N * train_set_report[n][0].max_NN_angular;
+      };
+      if (train_set_report[n][0].max_NN_radial > max_NN_radial) {
+        max_NN_radial = train_set_report[n][0].max_NN_radial;
+      }
+      if (train_set_report[n][0].max_NN_angular > max_NN_angular) {
+        max_NN_angular = train_set_report[n][0].max_NN_angular;
+      }
       continue;
     }
     if (train_set[n][0].N > N) {
@@ -175,6 +218,32 @@ Fitness::Fitness(Parameters& para)
     }
     if (train_set[n][0].max_NN_angular > max_NN_angular) {
       max_NN_angular = train_set[n][0].max_NN_angular;
+    }
+    if (para.mpi_rank == 0 && para.mpi_size > 1) {
+      if (train_set_report[n][0].N > N) {
+        N = train_set_report[n][0].N;
+      };
+      if (train_set_report[n][0].Nc > Nc) {
+        Nc = train_set_report[n][0].Nc;
+      };
+      if (
+        train_set_report[n][0].N * train_set_report[n][0].max_NN_radial >
+        N_times_max_NN_radial) {
+        N_times_max_NN_radial =
+          train_set_report[n][0].N * train_set_report[n][0].max_NN_radial;
+      };
+      if (
+        train_set_report[n][0].N * train_set_report[n][0].max_NN_angular >
+        N_times_max_NN_angular) {
+        N_times_max_NN_angular =
+          train_set_report[n][0].N * train_set_report[n][0].max_NN_angular;
+      };
+      if (train_set_report[n][0].max_NN_radial > max_NN_radial) {
+        max_NN_radial = train_set_report[n][0].max_NN_radial;
+      }
+      if (train_set_report[n][0].max_NN_angular > max_NN_angular) {
+        max_NN_angular = train_set_report[n][0].max_NN_angular;
+      }
     }
   }
 
@@ -294,15 +363,19 @@ void Fitness::compute(
     bool calculate_neighbor = (num_batches > 1) || (generation % 100 == 0);
 
     if (para.use_full_batch) {
-      int count_batch = batch_train_counts[generation % num_batches] == 0 ? -1 : 0;
+      std::vector<float> energy_sum_square(fitness_count, 0.0f);
+      std::vector<float> force_sum_square(fitness_count, 0.0f);
+      std::vector<float> virial_sum_square(fitness_count, 0.0f);
+      std::vector<float> charge_sum_square(fitness_count, 0.0f);
+      std::vector<float> bec_sum_square(fitness_count, 0.0f);
+      const float local_count_inv =
+        para.num_train_structures_local > 0 ? 1.0f / para.num_train_structures_local : 0.0f;
+
       for (int batch_id = 0; batch_id < num_batches; ++batch_id) {
-        if (batch_id == generation % num_batches) {
-          continue; // skip the batch that has already been calculated
-        }
         if (batch_train_counts[batch_id] == 0) {
           continue;
         }
-        ++count_batch;
+        const float batch_weight = batch_train_counts[batch_id] * local_count_inv;
         for (int n = 0; n < population_iter; ++n) {
           const float* individual = population + deviceCount * n * para.number_of_variables;
           potential->find_force(
@@ -316,39 +389,27 @@ void Fitness::compute(
             auto rmse_charge_array = train_set[batch_id][m].get_rmse_charge(para, m);
             auto rmse_bec_array = train_set[batch_id][m].get_rmse_bec(para, m);
             for (int t = 0; t <= para.num_types; ++t) {
-              // energy
-              float old_value = fitness_energy[deviceCount * n + m + t * para.population_size];
-              float new_value = para.lambda_e * rmse_energy_array[t];
-              new_value = old_value * old_value * count_batch + new_value * new_value;
-              new_value = sqrt(new_value / (count_batch + 1));
-              fitness_energy[deviceCount * n + m + t * para.population_size] = new_value;
-              // force
-              old_value = fitness_force[deviceCount * n + m + t * para.population_size];
-              new_value = para.lambda_f * rmse_force_array[t];
-              new_value = old_value * old_value * count_batch + new_value * new_value;
-              new_value = sqrt(new_value / (count_batch + 1));
-              fitness_force[deviceCount * n + m + t * para.population_size] = new_value;
-              // virial
-              old_value = fitness_virial[deviceCount * n + m + t * para.population_size];
-              new_value = para.lambda_v * rmse_virial_array[t];
-              new_value = old_value * old_value * count_batch + new_value * new_value;
-              new_value = sqrt(new_value / (count_batch + 1));
-              fitness_virial[deviceCount * n + m + t * para.population_size] = new_value;
-              // charge
-              old_value = fitness_charge[deviceCount * n + m + t * para.population_size];
-              new_value = para.lambda_q * rmse_charge_array[t];
-              new_value = old_value * old_value * count_batch + new_value * new_value;
-              new_value = sqrt(new_value / (count_batch + 1));
-              fitness_charge[deviceCount * n + m + t * para.population_size] = new_value;
-              // BEC
-              old_value = fitness_bec[deviceCount * n + m + t * para.population_size];
-              new_value = para.lambda_z * rmse_bec_array[t];
-              new_value = old_value * old_value * count_batch + new_value * new_value;
-              new_value = sqrt(new_value / (count_batch + 1));
-              fitness_bec[deviceCount * n + m + t * para.population_size] = new_value;
+              const int index = deviceCount * n + m + t * para.population_size;
+              float value = para.lambda_e * rmse_energy_array[t];
+              energy_sum_square[index] += batch_weight * value * value;
+              value = para.lambda_f * rmse_force_array[t];
+              force_sum_square[index] += batch_weight * value * value;
+              value = para.lambda_v * rmse_virial_array[t];
+              virial_sum_square[index] += batch_weight * value * value;
+              value = para.lambda_q * rmse_charge_array[t];
+              charge_sum_square[index] += batch_weight * value * value;
+              value = para.lambda_z * rmse_bec_array[t];
+              bec_sum_square[index] += batch_weight * value * value;
             }
           }
         }
+      }
+      for (int i = 0; i < fitness_count; ++i) {
+        fitness_energy[i] = sqrt(energy_sum_square[i]);
+        fitness_force[i] = sqrt(force_sum_square[i]);
+        fitness_virial[i] = sqrt(virial_sum_square[i]);
+        fitness_charge[i] = sqrt(charge_sum_square[i]);
+        fitness_bec[i] = sqrt(bec_sum_square[i]);
       }
     }
   }
@@ -547,14 +608,16 @@ void Fitness::report_error(
   }
   if (0 == (generation + 1) % 100) {
     int batch_id = generation % num_batches;
-    potential->find_force(para, elite, train_set[batch_id], false, true, 1);
+    std::vector<Dataset>& report_train_set =
+      (para.mpi_size > 1) ? train_set_report[batch_id] : train_set[batch_id];
+    potential->find_force(para, elite, report_train_set, false, true, 1);
     float energy_shift_per_structure;
     auto rmse_energy_train_array =
-      train_set[batch_id][0].get_rmse_energy(para, energy_shift_per_structure, false, true, 0);
-    auto rmse_force_train_array = train_set[batch_id][0].get_rmse_force(para, false, 0);
-    auto rmse_virial_train_array = train_set[batch_id][0].get_rmse_virial(para, false, 0);
-    auto rmse_charge_train_array = train_set[batch_id][0].get_rmse_charge(para, 0);
-    auto rmse_bec_train_array = train_set[batch_id][0].get_rmse_bec(para, 0);
+      report_train_set[0].get_rmse_energy(para, energy_shift_per_structure, false, true, 0);
+    auto rmse_force_train_array = report_train_set[0].get_rmse_force(para, false, 0);
+    auto rmse_virial_train_array = report_train_set[0].get_rmse_virial(para, false, 0);
+    auto rmse_charge_train_array = report_train_set[0].get_rmse_charge(para, 0);
+    auto rmse_bec_train_array = report_train_set[0].get_rmse_bec(para, 0);
 
     float rmse_energy_train = rmse_energy_train_array.back();
     float rmse_force_train = rmse_force_train_array.back();

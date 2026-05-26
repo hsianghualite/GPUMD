@@ -48,6 +48,7 @@ protected:
   FILE* fid_loss_out = NULL;
   std::unique_ptr<Potential> potential;
   std::vector<std::vector<Dataset>> train_set;
+  std::vector<std::vector<Dataset>> train_set_report;
   std::vector<int> batch_train_counts;
   std::vector<int> batch_total_counts;
   std::vector<Dataset> test_set;

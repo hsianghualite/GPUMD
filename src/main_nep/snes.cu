@@ -398,11 +398,13 @@ void SNES::compute(Parameters& para, Fitness* fitness_function)
         auto reduce_fitness = [count, weight](std::vector<float>& values) {
           std::vector<float> global_values(count);
           for (int i = 0; i < count; ++i) {
-            values[i] *= weight;
+            values[i] = values[i] * values[i] * weight;
           }
           MPI_Allreduce(
             values.data(), global_values.data(), count, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-          values.swap(global_values);
+          for (int i = 0; i < count; ++i) {
+            values[i] = sqrt(global_values[i]);
+          }
         };
         reduce_fitness(fitness_energy);
         reduce_fitness(fitness_force);
