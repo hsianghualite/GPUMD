@@ -21,16 +21,6 @@ class Parameters;
 class Dataset;
 
 struct NEP_Data {
-  GPU_Vector<int> NN_radial;  // radial neighbor number
-  GPU_Vector<int> NL_radial;  // radial neighbor list
-  GPU_Vector<int> NN_angular; // angular neighbor number
-  GPU_Vector<int> NL_angular; // angular neighbor list
-  GPU_Vector<float> x12_radial;
-  GPU_Vector<float> y12_radial;
-  GPU_Vector<float> z12_radial;
-  GPU_Vector<float> x12_angular;
-  GPU_Vector<float> y12_angular;
-  GPU_Vector<float> z12_angular;
   GPU_Vector<float> descriptors; // descriptors
   GPU_Vector<float> Fp;          // gradient of descriptors
   GPU_Vector<float> sum_fxyz;
@@ -54,7 +44,9 @@ public:
     int has_q_222;
     int has_q_1111;
     int has_q_112;
-    int has_q_1122;
+    int has_q_123;
+    int has_q_233;
+    int has_q_134;
     int num_L;
     int num_types = 0;
     int num_types_sq = 0;
@@ -96,7 +88,6 @@ public:
     const float* parameters,
     std::vector<Dataset>& dataset,
     bool calculate_q_scaler,
-    bool calculate_neighbor,
     int deviceCount);
 
 private:

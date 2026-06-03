@@ -89,7 +89,9 @@ public:
     int has_q_222 = 0;
     int has_q_1111 = 0;
     int has_q_112 = 0;
-    int has_q_1122 = 0;
+    int has_q_123 = 0;
+    int has_q_233 = 0;
+    int has_q_134 = 0;
     int dim_angular;
     int num_L;
     int basis_size_radial = 8;  // for nep3

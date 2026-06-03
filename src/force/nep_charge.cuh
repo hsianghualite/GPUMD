@@ -44,9 +44,6 @@ struct NEP_Charge_Data {
   GPU_Vector<float> D_real;
   GPU_Vector<float> charge;
   GPU_Vector<float> charge_derivative;
-  GPU_Vector<float> C6;                // C6
-  GPU_Vector<float> D_C6;              // related to dynamic C6
-  GPU_Vector<float> C6_derivative;     // dC6/dq
   GPU_Vector<float> bec;               // BEC
 };
 
@@ -74,7 +71,9 @@ public:
     int has_q_222 = 0;
     int has_q_1111 = 0;
     int has_q_112 = 0;
-    int has_q_1122 = 0;
+    int has_q_123 = 0;
+    int has_q_233 = 0;
+    int has_q_134 = 0;
     int num_L;
     int basis_size_radial = 8;  // for nep3
     int basis_size_angular = 8; // for nep3

@@ -44,7 +44,9 @@ public:
   int has_q_222;          // has q_222
   int has_q_1111;         // has q_1111
   int has_q_112;          // has q_112
-  int has_q_1122;         // has q_1122
+  int has_q_123;          // has q_123
+  int has_q_233;          // has q_233
+  int has_q_134;          // has q_134
   float lambda_1;         // weight parameter for L1 regularization loss
   float lambda_2;         // weight parameter for L2 regularization loss
   float lambda_e;         // weight parameter for energy RMSE loss
@@ -73,6 +75,7 @@ public:
   int fine_tune_descriptor = 1; // fine-tune descriptor; 0=no, 1=yes
   std::string fine_tune_nep_txt = "";
   std::string fine_tune_nep_restart = "";
+  float q_scaler_input;
 
   // check if a parameter has been set:
   bool is_train_mode_set;
@@ -100,6 +103,7 @@ public:
   bool is_zbl_set;
   bool is_use_typewise_cutoff_zbl_set;
   bool is_charge_mode_set;
+  bool is_q_scaler_set;
 
   // other parameters
   int dim;                            // dimension of the descriptor vector
@@ -166,4 +170,5 @@ private:
   void parse_charge_mode(const char** param, int num_param);
   void parse_fine_tune(const char** param, int num_param);
   void parse_save_potential(const char** param, int num_param);
+  void parse_q_scaler(const char** param, int num_param);
 };

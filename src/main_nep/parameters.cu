@@ -76,6 +76,7 @@ void Parameters::set_default_parameters()
   is_use_typewise_cutoff_zbl_set = false;
   is_charge_mode_set = false;
   is_save_potential_set = false;
+  is_q_scaler_set = false;
 
   train_mode = 0;              // potential
   prediction = 0;              // not prediction mode
@@ -88,7 +89,9 @@ void Parameters::set_default_parameters()
   has_q_222 = 1;               // default is to include q_222
   has_q_1111 = 0;              // default is not to include q_1111
   has_q_112 = 0;               // default is not to include q_112
-  has_q_1122 = 0;              // default is not to include q_1122
+  has_q_123 = 0;               // default is not to include q_123
+  has_q_233 = 0;               // default is not to include q_233
+  has_q_134 = 0;               // default is not to include q_134
   num_neurons1 = 30;           // a relatively small value to achieve high speed
   lambda_1 = lambda_2 = -1.0f; // automatic regularization
   lambda_e = lambda_f = 1.0f;  // energy and force are more important
@@ -110,6 +113,7 @@ void Parameters::set_default_parameters()
   typewise_cutoff_zbl_factor = -1.0f;
   output_descriptor = false;
   charge_mode = 0;
+  q_scaler_input = 0.02f;
 
   type_weight_cpu.resize(NUM_ELEMENTS);
   rc_radial.resize(NUM_ELEMENTS);
@@ -210,9 +214,20 @@ void Parameters::calculate_parameters()
   if (has_q_112) {
     dim_angular += n_max_angular + 1;
   }
-  if (has_q_1122) {
+  if (has_q_123) {
     dim_angular += n_max_angular + 1;
   }
+  if (has_q_233) {
+    dim_angular += n_max_angular + 1;
+  }
+  if (has_q_134) {
+    dim_angular += n_max_angular + 1;
+  }
+
+  if (dim_angular > 90) {
+    PRINT_INPUT_ERROR("Number of angular descriptors should not exceed 90.");
+  }
+
   dim = dim_radial + dim_angular;
   if (train_mode == 3) {
     dim += 1; // concatenate temeprature with descriptors
@@ -227,10 +242,6 @@ void Parameters::calculate_parameters()
   if (charge_mode) {
     number_of_variables_ann_1 += num_neurons1;
     number_of_variables_ann += num_neurons1 * num_types + 1;
-    if (charge_mode >= 3) {
-      number_of_variables_ann_1 += num_neurons1;
-      number_of_variables_ann += num_neurons1 * num_types;
-    }
   }
 
   number_of_variables_descriptor =
@@ -249,7 +260,7 @@ void Parameters::calculate_parameters()
     lambda_2 = sqrt(number_of_variables * 1.0e-6f / num_types);
   }
 
-  q_scaler_cpu.resize(dim, 1.0e10f);
+  q_scaler_cpu.resize(dim,  1.0e10f);
   if (fine_tune) {
     std::ifstream input(fine_tune_nep_txt);
     if (!input.is_open()) {
@@ -446,8 +457,6 @@ void Parameters::report_inputs()
       printf("    (input)   use NEP-Charge and include both real-space and k-space.\n");
     } else if (charge_mode == 2) {
       printf("    (input)   use NEP-Charge and include k-space only.\n");
-    } else if (charge_mode == 3) {
-      printf("    (input)   use NEP-Charge-VdW and include k-space only.\n");
     }
     printf("        lambda_q = %g.\n", lambda_q);
     printf("        lambda_z = %g.\n", lambda_z);
@@ -478,13 +487,17 @@ void Parameters::report_inputs()
     printf("    (input)   has_q_222 = %d.\n", has_q_222);
     printf("    (input)   has_q_1111 = %d.\n", has_q_1111);
     printf("    (input)   has_q_112 = %d.\n", has_q_112);
-    printf("    (input)   has_q_1122 = %d.\n", has_q_1122);
+    printf("    (input)   has_q_123 = %d.\n", has_q_123);
+    printf("    (input)   has_q_233 = %d.\n", has_q_233);
+    printf("    (input)   has_q_134 = %d.\n", has_q_134);
   } else {
     printf("    (default) l_max_3body = %d.\n", L_max);
     printf("    (default) has_q_222 = %d.\n", has_q_222);
     printf("    (default) has_q_1111 = %d.\n", has_q_1111);
     printf("    (default) has_q_112 = %d.\n", has_q_112);
-    printf("    (default) has_q_1122 = %d.\n", has_q_1122);
+    printf("    (default) has_q_123 = %d.\n", has_q_123);
+    printf("    (default) has_q_233 = %d.\n", has_q_233);
+    printf("    (default) has_q_134 = %d.\n", has_q_134);
   }
 
   if (is_neuron_set) {
@@ -577,6 +590,10 @@ void Parameters::report_inputs()
       fine_tune_nep_txt.c_str(), fine_tune_nep_restart.c_str());
   }
 
+  if (is_q_scaler_set) {
+    printf("    (input)   q_scaler = %g.\n", q_scaler_input);
+  }
+
   // some calcuated parameters:
   printf("Some calculated parameters:\n");
   printf("    number of radial descriptor components = %d.\n", dim_radial);
@@ -664,6 +681,8 @@ void Parameters::parse_one_keyword(std::vector<std::string>& tokens)
     parse_fine_tune(param, num_param);
   } else if (strcmp(param[0], "save_potential") == 0) {
     parse_save_potential(param, num_param);
+  } else if (strcmp(param[0], "q_scaler") == 0) {
+    parse_q_scaler(param, num_param);
   } else {
     PRINT_KEYWORD_ERROR(param[0]);
   }
@@ -926,13 +945,13 @@ void Parameters::parse_basis_size(const char** param, int num_param)
   }
   if (basis_size_radial < 0) {
     PRINT_INPUT_ERROR("basis_size_radial should >= 0.");
-  } else if (basis_size_radial > 8) {
-    PRINT_INPUT_ERROR("basis_size_radial should <= 8.");
+  } else if (basis_size_radial > 16) {
+    PRINT_INPUT_ERROR("basis_size_radial should <= 16.");
   }
   if (basis_size_angular < 0) {
     PRINT_INPUT_ERROR("basis_size_angular should >= 0.");
-  } else if (basis_size_angular > 8) {
-    PRINT_INPUT_ERROR("basis_size_angular should <= 8.");
+  } else if (basis_size_angular > 12) {
+    PRINT_INPUT_ERROR("basis_size_angular should <= 12.");
   }
 }
 
@@ -940,8 +959,8 @@ void Parameters::parse_l_max(const char** param, int num_param)
 {
   is_l_max_set = true;
 
-  if (num_param < 2 || num_param > 6) {
-    PRINT_INPUT_ERROR("l_max should have 1 to 5 parameters.\n");
+  if (num_param < 2 || num_param > 8) {
+    PRINT_INPUT_ERROR("l_max should have 1 to 7 parameters.\n");
   }
   if (!is_valid_int(param[1], &L_max)) {
     PRINT_INPUT_ERROR("l_max for 3-body descriptors should be an integer.\n");
@@ -972,10 +991,23 @@ void Parameters::parse_l_max(const char** param, int num_param)
   }
 
   if (num_param >= 6) {
-    if (!is_valid_int(param[5], &has_q_1122)) {
-      PRINT_INPUT_ERROR("has_q_1122 should be an integer.\n");
+    if (!is_valid_int(param[5], &has_q_123)) {
+      PRINT_INPUT_ERROR("has_q_123 should be an integer.\n");
     }
   }
+
+  if (num_param >= 7) {
+    if (!is_valid_int(param[6], &has_q_233)) {
+      PRINT_INPUT_ERROR("has_q_233 should be an integer.\n");
+    }
+  }
+
+  if (num_param >= 8) {
+    if (!is_valid_int(param[7], &has_q_134)) {
+      PRINT_INPUT_ERROR("has_q_134 should be an integer.\n");
+    }
+  }
+
 }
 
 void Parameters::parse_neuron(const char** param, int num_param)
@@ -1338,8 +1370,8 @@ void Parameters::parse_charge_mode(const char** param, int num_param)
   if (!is_valid_int(param[1], &charge_mode)) {
     PRINT_INPUT_ERROR("charge mode should be an integer.\n");
   }
-  if (charge_mode < 0 || charge_mode > 3) {
-    PRINT_INPUT_ERROR("charge mode should be 0 or 1 or 2 or 3.");
+  if (charge_mode < 0 || charge_mode > 2) {
+    PRINT_INPUT_ERROR("charge mode should be 0 or 1 or 2.");
   }
   if (num_param == 3) {
     if (!is_valid_int(param[2], &flip_charge)) {
@@ -1401,4 +1433,22 @@ void Parameters::parse_save_potential(const char** param, int num_param)
   if (save_potential_restart != 0 && save_potential_restart != 1) {
     PRINT_INPUT_ERROR("save_potential save restart should be 0 or 1.");
   }  
+}
+
+void Parameters::parse_q_scaler(const char** param, int num_param)
+{
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("q_scaler should have 1 parameter.\n");
+  }
+
+  double q_scaler_tmp = 0.0;
+  if (!is_valid_real(param[1], &q_scaler_tmp)) {
+    PRINT_INPUT_ERROR("q_scaler should be a number.\n");
+  }
+  q_scaler_input = static_cast<float>(q_scaler_tmp);
+  is_q_scaler_set = true;
+
+  if (q_scaler_input < 0.01f || q_scaler_input > 0.1f) {
+    PRINT_INPUT_ERROR("q_scaler must be in [0.01 0.1].");
+  }
 }
