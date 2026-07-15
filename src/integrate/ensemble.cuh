@@ -29,6 +29,14 @@ public:
   Ensemble(void);
   virtual ~Ensemble(void);
 
+  virtual void initialize_before_run(
+    Atom& atom,
+    Box& box,
+    std::vector<Group>& group,
+    GPU_Vector<double>& thermo)
+  {
+  }
+
   virtual void compute1(
     const double time_step,
     const std::vector<Group>& group,

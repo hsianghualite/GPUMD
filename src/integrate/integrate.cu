@@ -29,6 +29,7 @@ The driver class for the various integrators.
 #include "ensemble_npt_scr.cuh"
 #include "ensemble_nve.cuh"
 #include "ensemble_pimd.cuh"
+#include "ensemble_qct.cuh"
 #include "ensemble_qtb.cuh"
 #include "ensemble_ti.cuh"
 #include "ensemble_ti_as.cuh"
@@ -160,6 +161,8 @@ void Integrate::initialize(
       break;
     case -12: // npt_qtb
       break;
+    case -13: // qct
+      break;
     case 21: // heat-NHC
       ensemble.reset(new Ensemble_NHC(
         type,
@@ -252,6 +255,7 @@ void Integrate::initialize(
   ensemble->fixed_group = fixed_group;
   ensemble->fixed_grouping_method = fixed_grouping_method;
   ensemble->move_grouping_method = move_grouping_method;
+  ensemble->initialize_before_run(atom, box, group, thermo);
 }
 
 void Integrate::finalize()
@@ -449,6 +453,9 @@ void Integrate::parse_ensemble(
     ensemble.reset(ptr_temp);
     temperature1 = ptr_temp->t_start;
     temperature2 = ptr_temp->t_stop;
+  } else if (strcmp(param[1], "qct") == 0) {
+    type = -13;
+    ensemble.reset(new Ensemble_QCT(param, num_param));
   } else if (strcmp(param[1], "heat_nhc") == 0) {
     type = 21;
     if (num_param != 7) {
@@ -1019,6 +1026,8 @@ void Integrate::parse_ensemble(
     case -11:
       break;
     case -12: // npt_qtb (self-parsed)
+      break;
+    case -13:
       break;
     case 21:
       printf("Integrate with heating and cooling for this run.\n");
