@@ -142,8 +142,6 @@ static __global__ void find_descriptors_angular(
 NEP::NEP(
   Parameters& para,
   int N,
-  int N_times_max_NN_radial,
-  int N_times_max_NN_angular,
   int version,
   int deviceCount)
 {
@@ -227,7 +225,7 @@ NEP::NEP(
   }
 }
 
-void NEP::update_potential(Parameters& para, float* parameters, ANN& ann)
+void NEP::update_potential(float* parameters, ANN& ann)
 {
   float* pointer = parameters;
   for (int t = 0; t < paramb.num_types; ++t) {
@@ -239,7 +237,7 @@ void NEP::update_potential(Parameters& para, float* parameters, ANN& ann)
   ann.c = pointer;
 }
 
-static void __global__ find_max_min(const int N, const float* g_q, float* g_q_scaler)
+static void __global__ find_max_min(const int N, const float* g_q, float* g_q_scaler, float* g_q_scaler_max, float* g_q_scaler_min)
 {
   const int tid = threadIdx.x;
   const int bid = blockIdx.x;
@@ -275,7 +273,9 @@ static void __global__ find_max_min(const int N, const float* g_q, float* g_q_sc
     __syncthreads();
   }
   if (tid == 0) {
-    g_q_scaler[bid] = min(g_q_scaler[bid], 1.0f / (s_max[0] - s_min[0]));
+    g_q_scaler_max[bid] = max(g_q_scaler_max[bid], s_max[0]);
+    g_q_scaler_min[bid] = min(g_q_scaler_min[bid], s_min[0]);
+    g_q_scaler[bid] = 1.0f / (g_q_scaler_max[bid] - g_q_scaler_min[bid]);
   }
 }
 
@@ -671,7 +671,7 @@ void NEP::find_force(
     CHECK(gpuSetDevice(device_id));
     nep_data[device_id].parameters.copy_from_host(
       parameters + device_id * para.number_of_variables);
-    update_potential(para, nep_data[device_id].parameters.data(), annmb[device_id]);
+    update_potential(nep_data[device_id].parameters.data(), annmb[device_id]);
   }
 
   for (int device_id = 0; device_id < device_in_this_iter; ++device_id) {
@@ -743,7 +743,9 @@ void NEP::find_force(
       find_max_min<<<annmb[device_id].dim, 1024>>>(
         dataset[device_id].N,
         nep_data[device_id].descriptors.data(),
-        para.q_scaler_gpu[device_id].data());
+        para.q_scaler_gpu[device_id].data(),
+        para.q_scaler_max[device_id].data(),
+        para.q_scaler_min[device_id].data());
       GPU_CHECK_KERNEL
     }
 
