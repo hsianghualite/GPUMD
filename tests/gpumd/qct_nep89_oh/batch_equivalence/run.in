@@ -1,0 +1,6 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct canonical modes ../semiclassical/qct_modes.in temperature 0 seed 1234 zpe yes phase random replicas 8
+dump_qct 1
+run 100

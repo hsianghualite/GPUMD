@@ -1,0 +1,8 @@
+potential ../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct harmonic modes qct_modes.in temperature 0 seed 12345 zpe yes phase zero replicas 1
+dump_thermo 1
+dump_position 1 precision double
+dump_velocity 1
+run 2

@@ -6,7 +6,10 @@
 ================
 
 This file provides harmonic normal modes for native QCT initial-condition
-sampling.
+sampling. It is the editable text input option; GPUMD can alternatively read
+its binary ``eigenvector.out`` via the :ref:`QCT ensemble keyword
+<kw_ensemble_qct>`. Cartesian positions always come from the current
+``model.xyz``.
 
 File Format
 -----------
@@ -29,7 +32,7 @@ Required header fields::
 The ``reference_position`` line is optional. If present, its value must be
 ``yes``.
 
-The atoms block gives the reference structure used by the normal modes::
+The atoms block records the atom order and masses associated with the modes::
 
     atoms
     # index symbol mass x0 y0 z0
@@ -60,8 +63,10 @@ modes.
 Conventions
 -----------
 
-Frequencies are ordinary frequencies in THz, not squared frequencies. The QCT
-initializer converts them internally to angular frequencies.
+Frequencies are ordinary frequencies in THz, not squared frequencies. Values
+generated from ``eigenvector.out`` are therefore ``sqrt(omega2)``. The QCT
+initializer converts them internally to angular frequencies by multiplying by
+``2 pi``.
 
 Eigenvectors are mass-weighted normal-mode eigenvectors normalized as::
 

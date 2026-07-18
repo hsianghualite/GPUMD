@@ -1,0 +1,7 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct semiclassical stationary_point minimum hessian_displacement 0.001 v 2 J 5 seed 20260716 phase random zpe yes
+dump_thermo 1
+dump_xyz -1 0 1 trajectory.xyz mass velocity
+run 1

@@ -1,0 +1,7 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct mode_energy mode 7 energy 0.35 reaction_energy 0.05 stationary_point saddle reaction_direction negative seed 12 zpe yes phase random
+dump_thermo 1
+dump_xyz -1 0 1 trajectory.xyz mass velocity
+run 2

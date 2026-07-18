@@ -30,6 +30,7 @@ heat transport, Phys. Rev. B. 104, 104309 (2021).
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -367,6 +368,46 @@ NEP::~NEP(void)
   // nothing
 }
 
+bool NEP::configure_qct_batch(const int atoms_per_replica, const int replicas)
+{
+  if (atoms_per_replica < 2 || replicas <= 1 || paramb.model_type != 0 || has_dftd3) {
+    return false;
+  }
+
+  // The batch neighbor list is restricted to one replica. Therefore N - 1 is
+  // a hard upper bound for both neighbor counts and can be checked once here.
+  if (atoms_per_replica - 1 > paramb.MN_radial ||
+      atoms_per_replica - 1 > paramb.MN_angular) {
+    return false;
+  }
+
+  const size_t total_atoms = static_cast<size_t>(atoms_per_replica) * replicas;
+  if (total_atoms > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    return false;
+  }
+
+  qct_batch_enabled_ = true;
+  qct_atoms_per_replica_ = atoms_per_replica;
+  qct_replicas_ = replicas;
+  N1 = 0;
+  N2 = static_cast<int>(total_atoms);
+
+  nep_data.f12x.resize(total_atoms * paramb.MN_angular);
+  nep_data.f12y.resize(total_atoms * paramb.MN_angular);
+  nep_data.f12z.resize(total_atoms * paramb.MN_angular);
+  nep_data.NN_radial.resize(total_atoms);
+  nep_data.NL_radial.resize(total_atoms * paramb.MN_radial);
+  nep_data.NN_angular.resize(total_atoms);
+  nep_data.NL_angular.resize(total_atoms * paramb.MN_angular);
+  nep_data.Fp.resize(total_atoms * annmb.dim);
+  nep_data.sum_fxyz.resize(
+    total_atoms * (paramb.n_max_angular + 1) *
+    ((paramb.L_max + 1) * (paramb.L_max + 1) - 1));
+  nep_data.cpu_NN_radial.resize(total_atoms);
+  nep_data.cpu_NN_angular.resize(total_atoms);
+  return true;
+}
+
 void NEP::update_potential(float* parameters, ANN& ann)
 {
   float* pointer = parameters;
@@ -446,6 +487,62 @@ static __global__ void find_neighbor_list_large_box(
     g_NL_radial[count_radial++ * N + n1] = n2;
     if (d12_square < rc_angular * rc_angular) {
       g_NL_angular[count_angular++ * N + n1] = n2;
+    }
+  }
+
+  g_NN_radial[n1] = count_radial;
+  g_NN_angular[n1] = count_angular;
+}
+
+static __global__ void find_neighbor_list_qct_batch(
+  NEP::ParaMB paramb,
+  const int N,
+  const int atoms_per_replica,
+  const Box box,
+  const int* g_type,
+  const double* __restrict__ g_x,
+  const double* __restrict__ g_y,
+  const double* __restrict__ g_z,
+  int* g_NN_radial,
+  int* g_NL_radial,
+  int* g_NN_angular,
+  int* g_NL_angular)
+{
+  const int n1 = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n1 >= N) {
+    return;
+  }
+
+  const int replica_begin = (n1 / atoms_per_replica) * atoms_per_replica;
+  const int replica_end = replica_begin + atoms_per_replica;
+  const double x1 = g_x[n1];
+  const double y1 = g_y[n1];
+  const double z1 = g_z[n1];
+  const int t1 = g_type[n1];
+  int count_radial = 0;
+  int count_angular = 0;
+
+  for (int n2 = replica_begin; n2 < replica_end; ++n2) {
+    if (n1 == n2) {
+      continue;
+    }
+
+    float x12 = static_cast<float>(g_x[n2] - x1);
+    float y12 = static_cast<float>(g_y[n2] - y1);
+    float z12 = static_cast<float>(g_z[n2] - z1);
+    apply_mic(box, x12, y12, z12);
+    const float d12_square = x12 * x12 + y12 * y12 + z12 * z12;
+    const int t2 = g_type[n2];
+    const float rc_radial = (paramb.rc_radial[t1] + paramb.rc_radial[t2]) * 0.5f;
+    const float rc_angular = (paramb.rc_angular[t1] + paramb.rc_angular[t2]) * 0.5f;
+
+    if (d12_square < rc_radial * rc_radial) {
+      g_NL_radial[count_radial * N + n1] = n2;
+      ++count_radial;
+    }
+    if (d12_square < rc_angular * rc_angular) {
+      g_NL_angular[count_angular * N + n1] = n2;
+      ++count_angular;
     }
   }
 
@@ -949,28 +1046,44 @@ void NEP::compute_large_box(
   const int N = type.size();
   const int grid_size = (N2 - N1 - 1) / BLOCK_SIZE + 1;
 
-  neighbor.find_neighbor_global(
-    rc,
-    box, 
-    type, 
-    position_per_atom);
+  if (qct_batch_enabled_) {
+    find_neighbor_list_qct_batch<<<grid_size, BLOCK_SIZE>>>(
+      paramb,
+      N,
+      qct_atoms_per_replica_,
+      box,
+      type.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + N,
+      position_per_atom.data() + N * 2,
+      nep_data.NN_radial.data(),
+      nep_data.NL_radial.data(),
+      nep_data.NN_angular.data(),
+      nep_data.NL_angular.data());
+  } else {
+    neighbor.find_neighbor_global(
+      rc,
+      box,
+      type,
+      position_per_atom);
 
-  find_neighbor_list_large_box<<<grid_size, BLOCK_SIZE>>>(
-    paramb,
-    N,
-    N1,
-    N2,
-    box,
-    type.data(),
-    position_per_atom.data(),
-    position_per_atom.data() + N,
-    position_per_atom.data() + N * 2,
-    neighbor.NN.data(),
-    neighbor.NL.data(),
-    nep_data.NN_radial.data(),
-    nep_data.NL_radial.data(),
-    nep_data.NN_angular.data(),
-    nep_data.NL_angular.data());
+    find_neighbor_list_large_box<<<grid_size, BLOCK_SIZE>>>(
+      paramb,
+      N,
+      N1,
+      N2,
+      box,
+      type.data(),
+      position_per_atom.data(),
+      position_per_atom.data() + N,
+      position_per_atom.data() + N * 2,
+      neighbor.NN.data(),
+      neighbor.NL.data(),
+      nep_data.NN_radial.data(),
+      nep_data.NL_radial.data(),
+      nep_data.NN_angular.data(),
+      nep_data.NL_angular.data());
+  }
   GPU_CHECK_KERNEL
 
   static int num_calls = 0;
@@ -1323,6 +1436,12 @@ void NEP::compute(
   GPU_Vector<double>& force_per_atom,
   GPU_Vector<double>& virial_per_atom)
 {
+  if (qct_batch_enabled_) {
+    compute_large_box(
+      box, type, position_per_atom, potential_per_atom, force_per_atom, virial_per_atom);
+    return;
+  }
+
   const bool is_small_box = get_expanded_box(paramb.rc_radial_max, box, ebox);
   if (is_small_box) {
     // update small_box_data

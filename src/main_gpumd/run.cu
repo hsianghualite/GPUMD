@@ -25,6 +25,7 @@ Run simulation according to the inputs in the run.in file.
 #include "electron_stop.cuh"
 #include "force/force.cuh"
 #include "integrate/ensemble.cuh"
+#include "integrate/ensemble_qct.cuh"
 #include "integrate/integrate.cuh"
 #include "measure/active.cuh"
 #include "measure/adf.cuh"
@@ -42,6 +43,7 @@ Run simulation according to the inputs in the run.in file.
 #include "measure/dump_observer.cuh"
 #include "measure/dump_polarizability.cuh"
 #include "measure/dump_position.cuh"
+#include "measure/dump_qct.cuh"
 #include "measure/dump_restart.cuh"
 #include "measure/dump_shock_nemd.cuh"
 #include "measure/dump_thermo.cuh"
@@ -214,7 +216,8 @@ void Run::execute_run_in()
 
 void Run::perform_a_run()
 {
-  integrate.initialize(time_step, atom, box, group, thermo, number_of_steps);
+  integrate.initialize(time_step, atom, box, group, thermo, force, number_of_steps);
+  validate_qct_batch_configuration();
   mc.initialize();
   measure.initialize(number_of_steps, time_step, integrate, group, atom, box, force);
 
@@ -341,6 +344,51 @@ void Run::perform_a_run()
   max_distance_per_step = 0.0;
 }
 
+void Run::validate_qct_batch_configuration() const
+{
+  if (integrate.type != -13) {
+    return;
+  }
+
+  const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+  if (qct == nullptr || !qct->is_batch()) {
+    return;
+  }
+
+  if (velocity.do_velocity_correction) {
+    PRINT_INPUT_ERROR(
+      "QCT batch does not support correct_velocity; momentum correction must be performed per replica.");
+  }
+  if (force.compute_hnemd_ || force.compute_hnemdec_ >= 0) {
+    PRINT_INPUT_ERROR("QCT batch does not support HNEMD or HNEMD-C force corrections.");
+  }
+  if (electron_stop.do_electron_stop) {
+    PRINT_INPUT_ERROR("QCT batch does not support electron_stop.");
+  }
+  if (add_force.is_enabled()) {
+    PRINT_INPUT_ERROR("QCT batch does not support add_force.");
+  }
+  if (add_spring.is_enabled()) {
+    PRINT_INPUT_ERROR("QCT batch does not support add_spring.");
+  }
+  if (add_random_force.is_enabled()) {
+    PRINT_INPUT_ERROR("QCT batch does not support add_random_force.");
+  }
+  if (add_efield.is_enabled()) {
+    PRINT_INPUT_ERROR("QCT batch does not support add_efield.");
+  }
+  if (mc.is_enabled()) {
+    PRINT_INPUT_ERROR("QCT batch does not support MC/MD hybrid runs.");
+  }
+
+  for (const auto& property : measure.properties) {
+    if (property->property_name != "dump_qct") {
+      PRINT_INPUT_ERROR(
+        "QCT batch only supports dump_qct output until measurements have per-replica reductions.");
+    }
+  }
+}
+
 void Run::parse_one_keyword(std::vector<std::string>& tokens)
 {
   int num_param = tokens.size();
@@ -393,6 +441,10 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
   } else if (strcmp(param[0], "dump_thermo") == 0) {
     std::unique_ptr<Property> property;
     property.reset(new Dump_Thermo(param, num_param));
+    measure.properties.emplace_back(std::move(property));
+  } else if (strcmp(param[0], "dump_qct") == 0) {
+    std::unique_ptr<Property> property;
+    property.reset(new Dump_QCT(param, num_param));
     measure.properties.emplace_back(std::move(property));
   } else if (strcmp(param[0], "dump_position") == 0) {
     std::unique_ptr<Property> property;

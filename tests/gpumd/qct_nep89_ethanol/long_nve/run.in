@@ -1,0 +1,6 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.025
+
+ensemble qct microcanonical eigenvector ../prepare/eigenvector.out exclude_lowest 6 min_frequency 0.001 energy 20 reaction_energy 0.05 stationary_point saddle reaction_direction random seed 100 zpe yes phase random replicas 64
+dump_qct 1000
+run 1000000

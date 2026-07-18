@@ -53,6 +53,15 @@ public:
     GPU_Vector<double>& force,
     GPU_Vector<double>& virial){};
 
+  // Configure a batch of independent QCT replicas. Potentials that do not
+  // implement replica-isolated neighbors keep the default rejection path.
+  virtual bool configure_qct_batch(const int atoms_per_replica, const int replicas)
+  {
+    (void)atoms_per_replica;
+    (void)replicas;
+    return false;
+  }
+
   // add group message for ILPs
   virtual void compute_ilp(
     Box& box,

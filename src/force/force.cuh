@@ -66,6 +66,8 @@ public:
     const double T);
   void set_multiple_potentials_mode(std::string mode);
 
+  void configure_qct_batch(const int atoms_per_replica, const int replicas);
+
   bool compute_hnemd_ = false;
   int compute_hnemdec_ = -1;
   double hnemd_fe_[3];
@@ -76,6 +78,9 @@ public:
 
 private:
   int number_of_atoms_ = -1;
+  bool qct_batch_enabled_ = false;
+  int qct_atoms_per_replica_ = 0;
+  int qct_replicas_ = 1;
   bool is_fcp = false;
   bool has_non_nep = false;
   std::string multiple_potentials_mode_ = "observe"; // "observe" or "average"

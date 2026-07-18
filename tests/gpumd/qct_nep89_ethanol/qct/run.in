@@ -1,0 +1,7 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct harmonic eigenvector eigenvector.out exclude_lowest 6 min_frequency 50 temperature 300 seed 20260716 zpe yes phase random replicas 1
+dump_thermo 10
+dump_xyz -1 0 100 trajectory.xyz mass velocity
+run 1000

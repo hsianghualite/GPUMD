@@ -57,6 +57,14 @@ Output files
      - :ref:`dump_velocity <kw_dump_velocity>`
      - Contains the atomic velocities
      - Append
+   * - :ref:`qct_initial.out <qct_initial_out>`
+     - :ref:`ensemble qct harmonic <kw_ensemble_qct>`
+     - Sampled QCT normal-mode energies and phases
+     - Overwrite
+   * - :ref:`qct_initial.xyz <qct_initial_xyz>`
+     - :ref:`ensemble qct harmonic <kw_ensemble_qct>`
+     - Exact sampled QCT Cartesian phase point
+     - Overwrite
    * - :ref:`force.out <force_out_gpumd>`
      - :ref:`dump_force <kw_dump_force>`
      - Contains the atomic forces
@@ -204,3 +212,6 @@ Output files
    lsqt_sigma_out
    angular_rdf_out
    orientorder_out
+   qct_initial_out
+   qct_initial_summary
+   qct_initial_xyz

@@ -53,6 +53,7 @@ private:
   void parse_correct_velocity(const char** param, int num_param, const std::vector<Group>& group);
   void parse_time_step(const char** param, int num_param);
   void parse_run(const char** param, int num_param);
+  void validate_qct_batch_configuration() const;
 
   int number_of_types; // number of atom types
   int has_velocity_in_xyz = 0;

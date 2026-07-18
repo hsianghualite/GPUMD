@@ -1,0 +1,7 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+
+ensemble qct harmonic temperature 300 stationary_point auto hessian_displacement 0.001 seed 20260716 zpe yes phase random replicas 1
+dump_thermo 1
+dump_xyz -1 0 1 trajectory.xyz mass velocity
+run 2

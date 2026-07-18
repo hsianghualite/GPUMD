@@ -30,6 +30,7 @@ public:
   void parse(const char** param, int num_param, int number_of_atoms);
   void compute(const int step, Atom& atom);
   void finalize();
+  bool is_enabled() const { return num_calls_ > 0; }
 
 private:
   GPU_Vector<gpurandState> curand_states_;

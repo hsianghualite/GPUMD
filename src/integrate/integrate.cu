@@ -52,6 +52,7 @@ void Integrate::initialize(
   Box& box,
   std::vector<Group>& group,
   GPU_Vector<double>& thermo,
+  Force& force,
   int& total_steps)
 {
   this->total_steps = total_steps;
@@ -255,7 +256,7 @@ void Integrate::initialize(
   ensemble->fixed_group = fixed_group;
   ensemble->fixed_grouping_method = fixed_grouping_method;
   ensemble->move_grouping_method = move_grouping_method;
-  ensemble->initialize_before_run(atom, box, group, thermo);
+  ensemble->initialize_before_run(atom, box, group, thermo, force);
 }
 
 void Integrate::finalize()

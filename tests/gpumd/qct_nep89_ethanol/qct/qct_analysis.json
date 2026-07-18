@@ -1,0 +1,22 @@
+{
+  "atom_index_base": 0,
+  "time_step_fs": 0.1,
+  "dump_interval": 100,
+  "bond_reference": "../prepare/optimized.xyz",
+  "bond_scale": 1.25,
+  "persistence_frames": 5,
+  "energy_drift_tolerance_eV": 0.05,
+  "product_modes": [
+    {
+      "name": "ethanol",
+      "channels": ["unreacted"],
+      "atoms": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "reference": "../prepare/optimized.xyz",
+      "eigenvector": "../prepare/eigenvector.out",
+      "exclude_lowest": 6,
+      "min_frequency": 0.001,
+      "gaussian_width": 0.05,
+      "max_rmsd_A": 0.3
+    }
+  ]
+}

@@ -483,6 +483,26 @@ static __global__ void gpu_average_properties(
 
 void Force::set_multiple_potentials_mode(std::string mode) { multiple_potentials_mode_ = mode; }
 
+void Force::configure_qct_batch(const int atoms_per_replica, const int replicas)
+{
+  if (atoms_per_replica <= 0 || replicas <= 1) {
+    PRINT_INPUT_ERROR("QCT batch requires positive atoms_per_replica and replicas > 1.");
+  }
+  if (potentials.size() != 1 || potentials[0]->nep_model_type != 0) {
+    PRINT_INPUT_ERROR(
+      "QCT batch currently requires exactly one ordinary scalar NEP potential.");
+  }
+  auto* nep = dynamic_cast<NEP*>(potentials[0].get());
+  if (nep == nullptr || !nep->configure_qct_batch(atoms_per_replica, replicas)) {
+    PRINT_INPUT_ERROR(
+      "The selected potential does not support native QCT batch execution, or the per-atom NEP neighbor capacity is too small.");
+  }
+  qct_batch_enabled_ = true;
+  qct_atoms_per_replica_ = atoms_per_replica;
+  qct_replicas_ = replicas;
+  number_of_atoms_ = atoms_per_replica * replicas;
+}
+
 void Force::compute(
   Box& box,
   GPU_Vector<double>& position_per_atom,

@@ -1,0 +1,10 @@
+replicate 1 1 1
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+minimize fire 1.0e-5 5000
+
+ensemble nve
+time_step 0
+dump_xyz -1 0 1 optimized.xyz mass
+run 1
+
+compute_phonon 0.001

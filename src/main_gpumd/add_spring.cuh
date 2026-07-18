@@ -32,6 +32,7 @@ public:
   void parse(const char** param, int num_param, const std::vector<Group>& groups, Atom& atom);
   void compute(const int step, const std::vector<Group>& groups, Atom& atom);
   void finalize();
+  bool is_enabled() const { return num_calls_ > 0; }
 
 private:
   int num_calls_ = 0;

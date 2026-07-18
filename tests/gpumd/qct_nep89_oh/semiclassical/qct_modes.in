@@ -1,0 +1,46 @@
+QCT_MODES v1
+num_atoms 2
+num_modes 6
+frequency_unit THz
+coordinate_unit Angstrom
+mass_unit amu
+eigenvector_type mass_weighted
+normalization sum_e2_1
+reference_position yes
+
+atoms
+0 O 15.999 14.5 15.0 15.0
+1 H 1.008 15.47 15.0 15.0
+end_atoms
+
+modes
+mode 0 frequency 0.0 active no
+0 0.0 1.0 0.0
+1 0.0 0.0 0.0
+end_mode
+
+mode 1 frequency 0.0 active no
+0 0.0 0.0 1.0
+1 0.0 0.0 0.0
+end_mode
+
+mode 2 frequency 0.0 active no
+0 0.0 0.0 0.0
+1 0.0 1.0 0.0
+end_mode
+
+mode 3 frequency 0.0 active no
+0 0.0 0.0 0.0
+1 0.0 0.0 1.0
+end_mode
+
+mode 4 frequency 0.0 active no
+0 1.0 0.0 0.0
+1 0.0 0.0 0.0
+end_mode
+
+mode 5 frequency 100.0 active yes
+0 -0.243449 0.0 0.0
+1 0.969914 0.0 0.0
+end_mode
+end_modes

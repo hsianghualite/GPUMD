@@ -33,7 +33,8 @@ public:
     Atom& atom,
     Box& box,
     std::vector<Group>& group,
-    GPU_Vector<double>& thermo)
+    GPU_Vector<double>& thermo,
+    Force& force)
   {
   }
 

@@ -129,6 +129,8 @@ public:
     GPU_Vector<double>& force,
     GPU_Vector<double>& virial);
 
+  virtual bool configure_qct_batch(const int atoms_per_replica, const int replicas);
+
   const GPU_Vector<int>& get_NN_radial_ptr();
 
   const GPU_Vector<int>& get_NL_radial_ptr();
@@ -140,6 +142,9 @@ private:
   ExpandedBox ebox;
   DFTD3 dftd3;
   Neighbor neighbor;
+  bool qct_batch_enabled_ = false;
+  int qct_atoms_per_replica_ = 0;
+  int qct_replicas_ = 1;
 
   void update_potential(float* parameters, ANN& ann);
 
