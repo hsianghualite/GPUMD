@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import json
 import struct
 import subprocess
@@ -12,6 +13,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 ANALYZER = REPO_ROOT / "tools/qct/analyze_qct.py"
 MERGER = REPO_ROOT / "tools/qct/merge_qct_results.py"
 COMPARATOR = REPO_ROOT / "tools/qct/compare_batch.py"
+
+ANALYZER_SPEC = importlib.util.spec_from_file_location("analyze_qct", ANALYZER)
+ANALYZER_MODULE = importlib.util.module_from_spec(ANALYZER_SPEC)
+sys.modules[ANALYZER_SPEC.name] = ANALYZER_MODULE
+ANALYZER_SPEC.loader.exec_module(ANALYZER_MODULE)
 
 
 def write_h2_frame(output, distance, velocity, time):
@@ -48,6 +54,15 @@ def write_qct_modes(path):
             vector[3] = 2.0**-0.5
         modes.extend(vector)
     path.write_bytes(struct.pack(f"{dimension + dimension * dimension}f", *(omega2 + modes)))
+
+
+def test_gpumd_eigenvectors_have_deterministic_orientation(tmp_path):
+    path = tmp_path / "eigenvector.out"
+    write_qct_modes(path)
+    _, eigenvectors = ANALYZER_MODULE.load_gpumd_modes(path, 2)
+    largest_components = np.argmax(np.abs(eigenvectors), axis=1)
+    assert np.all(eigenvectors[np.arange(6), largest_components] >= 0.0)
+    assert eigenvectors[5, 0] > 0.0
 
 
 def run_analyzer(tmp_path, config):
@@ -207,8 +222,8 @@ def test_saddle_reaction_coordinate_and_recrossing(tmp_path):
     assert int(summary["reaction_mode_index"]) == 5
     assert int(summary["reaction_crossing_count"]) == 1
     assert int(summary["reaction_recrossing_count"]) == 1
-    assert int(summary["reaction_initial_side"]) == 1
-    assert int(summary["reaction_final_side"]) == -1
+    assert int(summary["reaction_initial_side"]) == -1
+    assert int(summary["reaction_final_side"]) == 1
     reaction_rows = list(csv.DictReader((tmp_path / "qct_reaction_coordinate.csv").open()))
     assert len(reaction_rows) == 5
 

@@ -1,8 +1,10 @@
+.. _qct_initial_summary:
+
 qct_initial_summary.csv
 =======================
 
-The ``qct_initial_summary.csv`` file is written by batched harmonic QCT
-initialization. It contains one row per replica with these columns:
+The ``qct_initial_summary.csv`` file is written by single- and multi-replica
+harmonic QCT initialization. It contains one row per replica with these columns:
 
 * ``replica``: zero-based replica index.
 * ``seed``: seed of the accepted phase-point sampling attempt.
@@ -12,8 +14,9 @@ initialization. It contains one row per replica with these columns:
   reaction-coordinate contributions.
 * ``potential_correction_eV``: real-potential energy change from the reference
   geometry to the sampled geometry.
-* ``stable_velocity_scale``: factor applied to the stable-mode velocity after
-  the real-potential correction.
+* ``stable_velocity_scale``: factor applied only to the correctable
+  vibrational velocity after the real-potential correction. Reaction-coordinate
+  and semiclassical rotational velocities are not scaled.
 
 This file can be used to audit rejected/resampled phase points and verify the
 initial per-replica energy balance.

@@ -89,6 +89,7 @@ private:
     std::uint64_t seed = 0;
     std::vector<double> position;
     std::vector<double> velocity;
+    std::vector<double> rotational_velocity;
     std::vector<Sampled_Mode> modes;
     double total_sampled_energy = 0.0;
     double rotational_energy = 0.0;
@@ -147,7 +148,6 @@ private:
   std::vector<double> evaluate_batch_potential_energy(
     Atom& atom, Box& box, std::vector<Group>& group, Force& force) const;
   void write_initial_outputs(const QCT_Modes& qct_modes, const Box& box) const;
-  void initialize_harmonic_batch(
+  void initialize_harmonic_replicas(
     Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force);
-  void initialize_harmonic(Atom& atom, Box& box, std::vector<Group>& group, Force& force);
 };

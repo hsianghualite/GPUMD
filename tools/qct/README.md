@@ -67,9 +67,11 @@ smallest successful batch reaching 95% of the measured peak throughput; keep
 a longer `run` in the template for stable measurements and extend the scan if
 the measured peak is at the largest candidate.
 
-Harmonic batch initialization also writes `qct_initial_summary.csv` with the
+Harmonic initialization also writes `qct_initial_summary.csv` with the
 accepted seed, sampled energy, real-potential correction, and stable-mode
-velocity scale for every replica. Use it with the first `qct_thermo.csv` row
+velocity scale for every replica. This scale applies only to vibrational
+velocity; saddle reaction momentum and semiclassical rotational angular
+momentum are preserved. Use it with the first `qct_thermo.csv` row
 to audit initial energy balance. `qct_initial.xyz` includes `pbc` and
 `Lattice`, so an accepted frame can be used directly as `model.xyz` with
 `ensemble qct phase_point`.

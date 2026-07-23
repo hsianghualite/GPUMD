@@ -43,8 +43,10 @@ Parameters
 ----------
 
 ``phase_point``
-  Use the positions and velocities already present in ``model.xyz``. No native
-  QCT initial-condition sampling is performed.
+  Use the positions and velocities already present in ``model.xyz``. The
+  ``Properties`` field must contain ``vel:R:3``; GPUMD rejects this mode when
+  velocities are absent instead of using its default random 300 K velocities.
+  No native QCT initial-condition sampling is performed.
 
 ``harmonic``
   Backward-compatible alias for ``canonical``. Generate a QCT phase point from
@@ -71,7 +73,9 @@ Parameters
   Minimum-only EBK sampling for a diatomic molecule. ``v`` sets the vibrational
   quantum number and ``J`` sets the rotational quantum number. The rotational
   angular momentum is ``sqrt(J(J+1)) hbar`` and is placed perpendicular to the
-  bond with a deterministic orientation.
+  sampled bond with a deterministic orientation. Real-potential energy
+  correction scales only the vibrational velocity, so the requested angular
+  momentum is preserved.
 
 ``modes``
   Path to the QCT normal-mode input file. The current implementation expects
@@ -111,7 +115,8 @@ Parameters
 ``reaction_direction``
   ``positive``, ``negative``, or ``random`` for a first-order saddle. The
   reaction eigenvector is given a deterministic sign convention before this
-  option is applied. The default is ``random``.
+  option is applied: the component with largest absolute value is positive.
+  The default is ``random``.
 
 ``reaction_energy``
   Optional positive reaction-coordinate energy in eV for a saddle launch.
@@ -185,7 +190,9 @@ For harmonic initialization, GPUMD writes
 :ref:`qct_initial.out <qct_initial_out>` with the sampled energy, phase, and
 normal coordinate/momentum of every mode. It also writes
 :ref:`qct_initial.xyz <qct_initial_xyz>` with the exact Cartesian positions and
-velocities before the first force evaluation. Both files use overwrite mode.
+velocities before the first force evaluation and
+:ref:`qct_initial_summary.csv <qct_initial_summary>` with the accepted energy
+correction for each replica. These files use overwrite mode.
 
 For a single replica, the standard trajectory output remains available::
 

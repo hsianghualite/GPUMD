@@ -271,6 +271,20 @@ Molecular_Hessian_Result Molecular_Hessian::compute(
       result.eigenvectors[row + dimension * full_mode] = value;
     }
   }
+  for (int mode = 0; mode < dimension; ++mode) {
+    int largest_component = 0;
+    for (int row = 1; row < dimension; ++row) {
+      if (std::fabs(result.eigenvectors[row + dimension * mode]) >
+          std::fabs(result.eigenvectors[largest_component + dimension * mode])) {
+        largest_component = row;
+      }
+    }
+    if (result.eigenvectors[largest_component + dimension * mode] < 0.0) {
+      for (int row = 0; row < dimension; ++row) {
+        result.eigenvectors[row + dimension * mode] *= -1.0;
+      }
+    }
+  }
   return result;
 }
 

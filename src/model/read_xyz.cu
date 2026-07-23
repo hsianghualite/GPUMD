@@ -500,6 +500,7 @@ void initialize_position(
   bool has_charge = true;
   read_xyz_line_2(
     input, box, has_velocity_in_xyz, has_mass, has_charge, num_columns, property_offset, group);
+  atom.has_velocity_in_xyz = has_velocity_in_xyz != 0;
 
   read_xyz_in_line_3(
     input,

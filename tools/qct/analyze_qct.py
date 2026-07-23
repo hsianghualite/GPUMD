@@ -582,6 +582,9 @@ def load_gpumd_modes(path, num_atoms):
     norms = np.linalg.norm(eigenvectors, axis=1)
     if np.any(~np.isfinite(values)) or np.any(np.abs(norms - 1.0) > 1.0e-3):
         raise ValueError(f"Invalid frequencies or eigenvectors in {path}")
+    largest_components = np.argmax(np.abs(eigenvectors), axis=1)
+    signs = eigenvectors[np.arange(dimension), largest_components]
+    eigenvectors[signs < 0.0] *= -1.0
     return frequencies, eigenvectors
 
 
