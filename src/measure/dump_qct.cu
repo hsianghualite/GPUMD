@@ -70,7 +70,7 @@ void Dump_QCT::preprocess(
   cpu_potential_.resize(atom.number_of_atoms);
   trajectory_ = my_fopen(trajectory_filename_.c_str(), "w");
   thermo_ = my_fopen(thermo_filename_.c_str(), "w");
-  fprintf(thermo_, "replica,step,time_fs,temperature_K,kinetic_energy_eV,potential_energy_eV,total_energy_eV\n");
+  fprintf(thermo_, "replica,step,time_fs,kinetic_temperature_K,kinetic_energy_eV,potential_energy_eV,total_energy_eV\n");
 }
 
 void Dump_QCT::process(
@@ -158,7 +158,7 @@ void Dump_QCT::process(
         vy,
         vz);
     }
-    const double temperature_replica =
+    const double kinetic_temperature_K =
       2.0 * kinetic_energy / (3.0 * atoms_per_replica_ * K_B);
     fprintf(
       thermo_,
@@ -166,7 +166,7 @@ void Dump_QCT::process(
       replica,
       step + 1,
       time_fs,
-      temperature_replica,
+      kinetic_temperature_K,
       kinetic_energy,
       potential_energy,
       kinetic_energy + potential_energy);

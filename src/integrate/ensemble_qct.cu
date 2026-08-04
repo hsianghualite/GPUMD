@@ -767,6 +767,24 @@ void Ensemble_QCT::classify_stationary_point(QCT_Modes& qct_modes) const
     qct_input_error("QCT found no active stable vibrational modes.");
   }
   if (qct_modes.reaction_mode_index >= 0) {
+    const double orthogonality_tolerance = 1.0e-6;
+    for (const auto& mode : qct_modes.modes) {
+      if (!mode.active) {
+        continue;
+      }
+      double overlap = 0.0;
+      const auto& stable = mode.eigenvector;
+      const auto& reaction = qct_modes.modes[qct_modes.reaction_mode_index].eigenvector;
+      for (size_t n = 0; n < stable.size(); ++n) {
+        overlap += stable[n] * reaction[n];
+      }
+      if (std::fabs(overlap) > orthogonality_tolerance) {
+        qct_input_error(
+          "Active stable QCT mode " + std::to_string(mode.index) +
+          " is not orthogonal to the reaction mode (overlap " +
+          std::to_string(overlap) + ").");
+      }
+    }
     printf(
       "    classified current structure as a first-order saddle; reaction mode is %d at %g THz.\n",
       qct_modes.reaction_mode_index,
@@ -822,6 +840,30 @@ void Ensemble_QCT::validate_qct_modes(const QCT_Modes& qct_modes, const Atom& at
       }
     } else if (norm > 1.0e-12 && std::fabs(norm - 1.0) > 1.0e-3) {
       qct_input_error("QCT mode eigenvector should satisfy normalization sum_e2_1.");
+    }
+  }
+
+  const double orthogonality_tolerance = 1.0e-6;
+  for (int first = 0; first < qct_modes.num_modes; ++first) {
+    if (!qct_modes.modes[first].active) {
+      continue;
+    }
+    for (int second = first + 1; second < qct_modes.num_modes; ++second) {
+      if (!qct_modes.modes[second].active) {
+        continue;
+      }
+      double overlap = 0.0;
+      const auto& a = qct_modes.modes[first].eigenvector;
+      const auto& b = qct_modes.modes[second].eigenvector;
+      for (size_t n = 0; n < a.size(); ++n) {
+        overlap += a[n] * b[n];
+      }
+      if (std::fabs(overlap) > orthogonality_tolerance) {
+        qct_input_error(
+          "Active QCT modes " + std::to_string(first) + " and " +
+          std::to_string(second) + " are not mass-weighted orthogonal (overlap " +
+          std::to_string(overlap) + ").");
+      }
     }
   }
 }
@@ -967,8 +1009,11 @@ Ensemble_QCT::Sampled_Point Ensemble_QCT::sample_harmonic_point(
     }
 
     if (sampled_mode.energy > 0.0) {
-      sampled_mode.phase =
-        phase_mode_ == Phase_Mode::random ? 2.0 * PI * uniform_01(rng) : 0.0;
+      if (phase_mode_ == Phase_Mode::random) {
+        sampled_mode.phase = 2.0 * PI * uniform_01(rng);
+      } else {
+        sampled_mode.phase = 0.25 * PI;
+      }
       sampled_mode.Q =
         std::sqrt(2.0 * sampled_mode.energy) * std::cos(sampled_mode.phase) / omega;
       sampled_mode.P = -std::sqrt(2.0 * sampled_mode.energy) * std::sin(sampled_mode.phase);

@@ -221,11 +221,44 @@ def test_saddle_reaction_coordinate_and_recrossing(tmp_path):
     assert summary["reaction_coordinate_available"] == "True"
     assert int(summary["reaction_mode_index"]) == 5
     assert int(summary["reaction_crossing_count"]) == 1
-    assert int(summary["reaction_recrossing_count"]) == 1
+    assert int(summary["reaction_recrossing_count"]) == 0
     assert int(summary["reaction_initial_side"]) == -1
     assert int(summary["reaction_final_side"]) == 1
     reaction_rows = list(csv.DictReader((tmp_path / "qct_reaction_coordinate.csv").open()))
     assert len(reaction_rows) == 5
+
+
+def test_recrossing_returns_to_initial_side(tmp_path):
+    with (tmp_path / "initial.xyz").open("w", encoding="utf-8") as output:
+        write_h2_frame(output, 0.74, 0.01, 0.0)
+    with (tmp_path / "qct_stationary.xyz").open("w", encoding="utf-8") as output:
+        write_h2_frame(output, 0.74, 0.0, 0.0)
+    with (tmp_path / "qct_initial.out").open("w", encoding="utf-8") as output:
+        output.write("# QCT_INITIAL v1\n# reaction_mode 5\n")
+    write_qct_modes(tmp_path / "qct_eigenvector.out")
+    # Start on the negative side, cross to positive, then return negative (recross).
+    with (tmp_path / "trajectory.xyz").open("w", encoding="utf-8") as output:
+        write_h2_frame(output, 1.00, 0.01, 1.0)
+        write_h2_frame(output, 1.05, 0.01, 2.0)
+        write_h2_frame(output, 0.60, -0.01, 3.0)
+        write_h2_frame(output, 1.00, 0.01, 4.0)
+        write_h2_frame(output, 1.05, 0.01, 5.0)
+    np.savetxt(tmp_path / "thermo.out", np.asarray([[300, 0.1, -1.0]] * 5))
+    _, summary = run_analyzer(
+        tmp_path,
+        {
+            "stationary_point": "saddle",
+            "reaction_mode_index": 5,
+            "reaction_coordinate_deadband_sqrt_amu_A": 0.01,
+            "reaction_coordinate_hysteresis_sqrt_amu_A": 0.0,
+            "bond_cutoffs_A": {"H-H": 2.0},
+            "persistence_frames": 2,
+        },
+    )
+    assert int(summary["reaction_crossing_count"]) == 2
+    assert int(summary["reaction_recrossing_count"]) == 1
+    assert int(summary["reaction_initial_side"]) == -1
+    assert int(summary["reaction_final_side"]) == -1
 
 
 def test_merge_replica_summaries(tmp_path):
@@ -270,7 +303,7 @@ def test_batch_trajectory_analysis(tmp_path):
                 write_h2_frame(output, 0.74, 0.01, float(step))
     with (tmp_path / "qct_thermo.csv").open("w", encoding="utf-8", newline="") as output:
         output.write(
-            "replica,step,time_fs,temperature_K,kinetic_energy_eV,"
+            "replica,step,time_fs,kinetic_temperature_K,kinetic_energy_eV,"
             "potential_energy_eV,total_energy_eV\n"
         )
         for step in range(1, 4):

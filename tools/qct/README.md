@@ -34,7 +34,7 @@ dump_qct 100
 
 `qct_trajectory.xyz` contains one extxyz frame for each replica at every dump
 step. Each frame has `Replica`, `Step`, and `Seed` metadata. The companion
-`qct_thermo.csv` stores one energy and temperature row per replica and step.
+`qct_thermo.csv` stores one energy and raw kinetic-temperature row per replica and step. The `kinetic_temperature_K` column is `2K/(3N k_B)` over all atoms and is a kinetic diagnostic, not a canonical molecular temperature, because it includes center-of-mass and rotational motion.
 The batch path currently accepts only `dump_qct`; standard measurements do not
 yet perform segmented per-replica reductions.
 

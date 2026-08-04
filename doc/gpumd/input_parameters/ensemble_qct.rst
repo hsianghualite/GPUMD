@@ -203,7 +203,7 @@ For a native batch run, use the QCT-specific output::
     dump_qct 100
 
 This writes one frame per replica with ``Replica``, ``Step``, and ``Seed``
-metadata, plus per-replica energies in ``qct_thermo.csv``. Other measurement
+metadata, plus per-replica energies and a raw kinetic temperature in ``qct_thermo.csv`` (the ``kinetic_temperature_K`` column is ``2K/(3N k_B)`` and is a kinetic diagnostic, not a canonical molecular temperature). Other measurement
 keywords are currently rejected for batch runs because their reductions do
 not yet have per-replica semantics. The QCT analysis and multi-replica
 aggregation tools are documented in ``tools/qct/README.md``.

@@ -460,7 +460,7 @@ def read_thermo(path, replica=None):
         thermo = np.asarray(
             [
                 [
-                    float(row["temperature_K"]),
+                    float(row.get("kinetic_temperature_K", row.get("temperature_K"))),
                     float(row["kinetic_energy_eV"]),
                     float(row["potential_energy_eV"]),
                 ]
@@ -487,7 +487,7 @@ def read_batch_thermo(path):
         for row in reader:
             groups.setdefault(str(row["replica"]), []).append(
                 [
-                    float(row["temperature_K"]),
+                    float(row.get("kinetic_temperature_K", row.get("temperature_K"))),
                     float(row["kinetic_energy_eV"]),
                     float(row["potential_energy_eV"]),
                 ]
@@ -682,6 +682,8 @@ def reaction_coordinate_series(
     side = 0
     initial_side = 0
     crossings = 0
+    recrossings = 0
+    seen_sides = set()
     for row in rows:
         coordinate = row["Q_rxn_sqrt_amu_A"]
         if side == 0:
@@ -691,12 +693,19 @@ def reaction_coordinate_series(
                 side = -1
             if side != 0 and initial_side == 0:
                 initial_side = side
+                seen_sides.add(side)
         elif side == 1 and coordinate < -exit_threshold:
             side = -1
             crossings += 1
+            if side in seen_sides:
+                recrossings += 1
+            seen_sides.add(side)
         elif side == -1 and coordinate > exit_threshold:
             side = 1
             crossings += 1
+            if side in seen_sides:
+                recrossings += 1
+            seen_sides.add(side)
         row["side"] = side
 
     return rows, {
@@ -711,7 +720,7 @@ def reaction_coordinate_series(
         "reaction_initial_side": initial_side,
         "reaction_final_side": side,
         "reaction_crossing_count": crossings,
-        "reaction_recrossing_count": crossings,
+        "reaction_recrossing_count": recrossings,
     }, rows
 
 
