@@ -45,6 +45,7 @@ public:
     int version = 4; // NEP version, 3 for NEP3 and 4 for NEP4
     int model_type =
       0; // 0=potential, 1=dipole, 2=polarizability, 3=temperature-dependent free energy
+    bool is_efa = false; // true when the nep.txt header is nep4_efa / nep4_zbl_efa
     float rc_radial_max = 0.0f;
     float rc_radial_max_inv = 0.0f; 
     float rc_radial[NUM_ELEMENTS];     // radial cutoff
@@ -103,12 +104,16 @@ public:
   };
 
   struct Small_Box_Data {
-        GPU_Vector<int> NN_radial;
-        GPU_Vector<int> NL_radial;
-        GPU_Vector<int> NN_angular;
-        GPU_Vector<int> NL_angular;
-        GPU_Vector<float> r12;
-    } small_box_data;
+    GPU_Vector<int> NN_radial;
+    GPU_Vector<int> NL_radial;
+    GPU_Vector<int> NN_angular;
+    GPU_Vector<int> NL_angular;
+    GPU_Vector<float> r12;
+  };
+
+  // Public so that composed potentials (e.g. NEP_EFA) can reuse the small-box
+  // neighbor lists built by NEP::compute_small_box.
+  Small_Box_Data small_box_data;
 
   NEP(const char* file_potential, const int num_atoms);
   virtual ~NEP(void);
@@ -133,11 +138,14 @@ public:
 
   const GPU_Vector<int>& get_NL_radial_ptr();
 
-private:
+  // Public so that composed potentials (e.g. NEP_EFA) can read the
+  // hyperparameters that NEP parsed from nep.txt.
   ParaMB paramb;
   ANN annmb;
   ZBL zbl;
   ExpandedBox ebox;
+
+private:
   DFTD3 dftd3;
   Neighbor neighbor;
 

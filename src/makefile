@@ -15,7 +15,7 @@
 # some flags
 ###########################################################
 CC = nvcc
-CUDA_ARCH=-arch=sm_60
+CUDA_ARCH=-arch=sm_70
 WARN_FLAGS = -Wall -Wextra
 WARN_FLAGS += -Wno-sign-compare -Wno-unused-parameter
 WARN_FLAGS += -Wnull-dereference -Wstringop-overflow -Wstringop-truncation -Wrestrict

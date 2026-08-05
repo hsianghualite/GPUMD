@@ -91,6 +91,14 @@ NEP::NEP(const char* file_potential, const int num_atoms)
   } else if (tokens[0] == "nep4_zbl") {
     paramb.version = 4;
     zbl.enabled = true;
+  } else if (tokens[0] == "nep4_efa") {
+    paramb.version = 4;
+    zbl.enabled = false;
+    paramb.is_efa = true;
+  } else if (tokens[0] == "nep4_zbl_efa") {
+    paramb.version = 4;
+    zbl.enabled = true;
+    paramb.is_efa = true;
   } else if (tokens[0] == "nep5") {
     paramb.version = 5;
     zbl.enabled = false;
@@ -300,6 +308,32 @@ NEP::NEP(const char* file_potential, const int num_atoms)
   }
   printf("    ANN = %d-%d-1.\n", annmb.dim, annmb.num_neurons1);
 
+  // EFA hyperparameter line (only present for nep4_efa / nep4_zbl_efa models).
+  // NEP itself does not use these values; they are consumed by the composed
+  // NEP_EFA potential which re-opens the file.  Skip the line here so that
+  // the parameter-reading loop below is positioned correctly.
+  int efa_dim_file = 0;
+  int efa_num_para_file = 0;
+  if (paramb.is_efa) {
+    std::vector<std::string> efa_tokens = get_tokens(input);
+    if (efa_tokens.size() < 6 || efa_tokens[0] != "efa") {
+      std::cout << "Expected an 'efa l_max num_radial omega_max alpha lambda_e' line."
+                << std::endl;
+      exit(1);
+    }
+    const int efa_l_max_file = get_int_from_token(efa_tokens[1], __FILE__, __LINE__);
+    const int efa_num_radial_file = get_int_from_token(efa_tokens[2], __FILE__, __LINE__);
+    if (efa_l_max_file < 1 || efa_l_max_file > 4 || efa_num_radial_file < 1 ||
+        efa_num_radial_file > 16) {
+      std::cout << "Invalid EFA descriptor dimensions in nep.txt." << std::endl;
+      exit(1);
+    }
+    efa_dim_file = efa_l_max_file * efa_num_radial_file;
+    const int efa_num_para_ann =
+      (efa_dim_file + 2) * annmb.num_neurons1 * paramb.num_types + 1;
+    efa_num_para_file = efa_num_para_ann + efa_dim_file * paramb.num_types * paramb.num_types;
+  }
+
   // calculated parameters:
   rc = paramb.rc_radial_max; // largest cutoff
   paramb.num_types_sq = paramb.num_types * paramb.num_types;
@@ -326,9 +360,29 @@ NEP::NEP(const char* file_potential, const int num_atoms)
 
   // NN and descriptor parameters
   std::vector<float> parameters(annmb.num_para + annmb.dim);
-  for (int n = 0; n < annmb.num_para + annmb.dim; ++n) {
+  for (int n = 0; n < annmb.num_para; ++n) {
     tokens = get_tokens(input);
     parameters[n] = get_double_from_token(tokens[0], __FILE__, __LINE__);
+  }
+  // When the model is an EFA model, the NEP parameters are followed by the
+  // EFA parameter block before the NEP q_scaler.
+  if (paramb.is_efa) {
+    std::vector<std::string> skip_tokens;
+    for (int n = 0; n < efa_num_para_file; ++n) {
+      skip_tokens = get_tokens(input);
+    }
+  }
+  for (int n = 0; n < annmb.dim; ++n) {
+    tokens = get_tokens(input);
+    parameters[annmb.num_para + n] = get_double_from_token(tokens[0], __FILE__, __LINE__);
+  }
+  // Skip the EFA q_scaler so the file pointer is left positioned at the
+  // optional flexible ZBL block.
+  if (paramb.is_efa) {
+    std::vector<std::string> skip_tokens;
+    for (int n = 0; n < efa_dim_file; ++n) {
+      skip_tokens = get_tokens(input);
+    }
   }
   nep_data.parameters.resize(annmb.num_para + annmb.dim);
   nep_data.parameters.copy_from_host(parameters.data());

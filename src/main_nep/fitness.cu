@@ -20,6 +20,7 @@ Get the fitness
 #include "fitness.cuh"
 #include "nep.cuh"
 #include "nep_charge.cuh"
+#include "nep_efa.cuh"
 #include "tnep.cuh"
 #include "parameters.cuh"
 #include "structure.cuh"
@@ -128,6 +129,8 @@ Fitness::Fitness(Parameters& para)
   } else {
     if (para.charge_mode) {
       potential.reset(new NEP_Charge(para, N, Nc, para.version, deviceCount));
+    } else if (para.efa_mode) {
+      potential.reset(new NEP_EFA(para, N, Nc, para.version, deviceCount));
     } else {
       potential.reset(new NEP(para, N, para.version, deviceCount));
     }
@@ -324,11 +327,19 @@ void Fitness::write_nep_txt(FILE* fid_nep, Parameters& para, float* elite)
     if (!para.charge_mode) {
       if (para.version == 4) {
         if (para.enable_zbl) {
-          fprintf(fid_nep, "nep4_zbl %d ", para.num_types);
+          if (para.efa_mode) {
+            fprintf(fid_nep, "nep4_zbl_efa %d ", para.num_types);
+          } else {
+            fprintf(fid_nep, "nep4_zbl %d ", para.num_types);
+          }
         } else {
-          fprintf(fid_nep, "nep4 %d ", para.num_types);
+          if (para.efa_mode) {
+            fprintf(fid_nep, "nep4_efa %d ", para.num_types);
+          } else {
+            fprintf(fid_nep, "nep4 %d ", para.num_types);
+          }
         }
-      } 
+      }
     } else {
       if (para.enable_zbl) {
         fprintf(fid_nep, "nep4_zbl_charge%d %d ", para.charge_mode, para.num_types);
@@ -399,6 +410,13 @@ void Fitness::write_nep_txt(FILE* fid_nep, Parameters& para, float* elite)
     fprintf(fid_nep, "ANN %d %d\n", para.num_neurons1, 0);
   }
 
+  // EFA hyperparameters (so the MD-side NEP_EFA can reconstruct the architecture)
+  if (para.efa_mode) {
+    fprintf(
+      fid_nep, "efa %d %d %g %g %g\n", para.efa_l_max, para.efa_num_radial,
+      para.efa_omega_max, para.efa_alpha, para.efa_lambda_e);
+  }
+
   for (int m = 0; m < para.number_of_variables; ++m) {
     fprintf(fid_nep, "%15.7e\n", elite[m]);
   }
@@ -406,6 +424,13 @@ void Fitness::write_nep_txt(FILE* fid_nep, Parameters& para, float* elite)
   para.q_scaler_gpu[0].copy_to_host(para.q_scaler_cpu.data());
   for (int d = 0; d < para.q_scaler_cpu.size(); ++d) {
     fprintf(fid_nep, "%15.7e\n", para.q_scaler_cpu[d]);
+  }
+  // EFA q_scaler (written after NEP's q_scaler when efa_mode is on)
+  if (para.efa_mode) {
+    para.q_scaler_efa_gpu[0].copy_to_host(para.q_scaler_efa_cpu.data());
+    for (int d = 0; d < para.q_scaler_efa_cpu.size(); ++d) {
+      fprintf(fid_nep, "%15.7e\n", para.q_scaler_efa_cpu[d]);
+    }
   }
   if (para.flexible_zbl) {
     for (int d = 0; d < 10 * (para.num_types * (para.num_types + 1) / 2); ++d) {

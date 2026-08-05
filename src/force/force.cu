@@ -33,6 +33,7 @@ The driver class calculating force and related quantities.
 #include "nep.cuh"
 #include "nep_multigpu.cuh"
 #include "nep_charge.cuh"
+#include "nep_efa.cuh"
 #include "potential.cuh"
 #include "tersoff1988.cuh"
 #include "tersoff1989.cuh"
@@ -122,6 +123,18 @@ void Force::parse_potential(
     strcmp(potential_name, "nep4_zbl_charge2") == 0 ||
     strcmp(potential_name, "nep4_zbl_charge3") == 0) {
     potential.reset(new NEP_Charge(param[1], number_of_atoms));
+    is_nep = true;
+    check_types(param[1]);
+  } else if (
+    strcmp(potential_name, "nep4_efa") == 0 ||
+    strcmp(potential_name, "nep4_zbl_efa") == 0) {
+    int num_gpus;
+    CHECK(gpuGetDeviceCount(&num_gpus));
+    if (num_gpus != 1) {
+      PRINT_INPUT_ERROR(
+        "EFA currently supports exactly one GPU; multi-GPU EFA is not implemented.\n");
+    }
+    potential.reset(new NEP_EFA(param[1], number_of_atoms));
     is_nep = true;
     check_types(param[1]);
   } else if (

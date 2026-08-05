@@ -54,6 +54,7 @@ public:
 
   GPU_Vector<float> charge;      // calculated charge in GPU
   GPU_Vector<float> charge_shifted;      // shifted charge in GPU
+  GPU_Vector<float> efa_attention_shifted; // neutrality-shifted EFA attention
   GPU_Vector<float> bec;         // Born effective charge in GPU
   GPU_Vector<float> energy;      // calculated energy in GPU
   GPU_Vector<float> virial;      // calculated virial in GPU

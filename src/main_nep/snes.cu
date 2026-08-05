@@ -290,6 +290,32 @@ void SNES::find_type_of_variable(Parameters& para)
       }
     }
   }
+
+  // EFA part (appended after the NEP parameters when efa_mode is on)
+  if (para.efa_mode) {
+    // EFA ANN: single-output, same layout as NEP ANN
+    for (int t = 0; t < para.num_types; ++t) {
+      for (int n = 0; n < para.number_of_variables_efa_ann_1; ++n) {
+        type_of_variable[offset + n] = t;
+      }
+      offset += para.number_of_variables_efa_ann_1;
+    }
+    offset += 1; // shared b1
+    // EFA ERoPE radial coefficients: (l, radial_frequency, center_type,
+    // neighbor_type), flattened in the same order used by the descriptor
+    // kernels.
+    for (int l = 0; l < para.efa_l_max; ++l) {
+      for (int r = 0; r < para.efa_num_radial; ++r) {
+        const int d = l * para.efa_num_radial + r;
+        for (int t1 = 0; t1 < para.num_types; ++t1) {
+          for (int t2 = 0; t2 < para.num_types; ++t2) {
+            const int t12 = t1 * para.num_types + t2;
+            type_of_variable[offset + d * para.num_types * para.num_types + t12] = t1;
+          }
+        }
+      }
+    }
+  }
 }
 
 void SNES::compute(Parameters& para, Fitness* fitness_function)

@@ -173,6 +173,8 @@ void Dataset::initialize_gpu_data(Parameters& para)
     bec_cpu.resize(N * 9);
     bec_ref_cpu.resize(N * 9);
     bec_ref_gpu.resize(N * 9);
+  } else if (para.efa_mode) {
+    efa_attention_shifted.resize(N);
   }
 
   energy.resize(N);

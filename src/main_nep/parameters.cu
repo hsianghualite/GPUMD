@@ -78,6 +78,12 @@ void Parameters::set_default_parameters()
   is_save_potential_set = false;
   is_output_interval_set = false;
   is_q_scaler_set = false;
+  is_efa_mode_set = false;
+  is_efa_l_max_set = false;
+  is_efa_num_radial_set = false;
+  is_efa_omega_max_set = false;
+  is_efa_alpha_set = false;
+  is_efa_lambda_e_set = false;
 
   train_mode = 0;              // potential
   prediction = 0;              // not prediction mode
@@ -116,6 +122,12 @@ void Parameters::set_default_parameters()
   output_descriptor = false;
   charge_mode = 0;
   q_scaler_input = 0.02f;
+  efa_mode = false;
+  efa_l_max = 3;
+  efa_num_radial = 4;
+  efa_omega_max = 6.0f;
+  efa_alpha = 0.5f;
+  efa_lambda_e = 1.0f;
 
   type_weight_cpu.resize(NUM_ELEMENTS);
   rc_radial.resize(NUM_ELEMENTS);
@@ -255,6 +267,21 @@ void Parameters::calculate_parameters()
     number_of_variables += number_of_variables_ann;
   }
 
+  if (efa_mode) {
+    if (charge_mode) {
+      PRINT_INPUT_ERROR("EFA mode and charge mode are mutually exclusive.");
+    }
+    if (train_mode != 0) {
+      PRINT_INPUT_ERROR("EFA mode is only supported for potential model.");
+    }
+    efa_dim = efa_l_max * efa_num_radial;
+    number_of_variables_efa_ann_1 = (efa_dim + 2) * num_neurons1;
+    number_of_variables_efa_ann = number_of_variables_efa_ann_1 * num_types + 1;
+    number_of_variables_efa_descriptor = efa_dim * num_types * num_types;
+    number_of_variables_efa = number_of_variables_efa_ann + number_of_variables_efa_descriptor;
+    number_of_variables += number_of_variables_efa;
+  }
+
   if (!is_lambda_1_set) {
     lambda_1 = sqrt(number_of_variables * 1.0e-6f / num_types);
   }
@@ -317,6 +344,21 @@ void Parameters::calculate_parameters()
     q_scaler_max[device_id].copy_from_host(q_scaler_max_cpu.data());
     q_scaler_min[device_id].copy_from_host(q_scaler_min_cpu.data());
   }
+
+  // EFA q_scaler (initialized to a large value, like the NEP q_scaler above;
+  // the actual values are computed by NEP_EFA::find_force on the first call
+  // when calculate_q_scaler == true).
+  if (efa_mode) {
+    q_scaler_efa_cpu.resize(efa_dim, 1.0e10f);
+    int deviceCount2;
+    CHECK(gpuGetDeviceCount(&deviceCount2));
+    for (int device_id = 0; device_id < deviceCount2; device_id++) {
+      CHECK(gpuSetDevice(device_id));
+      q_scaler_efa_gpu[device_id].resize(efa_dim);
+      q_scaler_efa_gpu[device_id].copy_from_host(q_scaler_efa_cpu.data());
+    }
+  }
+
 }
 
 void Parameters::check_foundation_model(const std::string& filename)
@@ -725,6 +767,18 @@ void Parameters::parse_one_keyword(std::vector<std::string>& tokens)
     parse_q_scaler(param, num_param);
   } else if (strcmp(param[0], "import_q_scaler") == 0) {
     parse_import_q_scaler(param, num_param);
+  } else if (strcmp(param[0], "efa_mode") == 0) {
+    parse_efa_mode(param, num_param);
+  } else if (strcmp(param[0], "efa_l_max") == 0) {
+    parse_efa_l_max(param, num_param);
+  } else if (strcmp(param[0], "efa_num_radial") == 0) {
+    parse_efa_num_radial(param, num_param);
+  } else if (strcmp(param[0], "efa_omega_max") == 0) {
+    parse_efa_omega_max(param, num_param);
+  } else if (strcmp(param[0], "efa_alpha") == 0) {
+    parse_efa_alpha(param, num_param);
+  } else if (strcmp(param[0], "efa_lambda_e") == 0) {
+    parse_efa_lambda_e(param, num_param);
   } else {
     PRINT_KEYWORD_ERROR(param[0]);
   }
@@ -1524,4 +1578,96 @@ void Parameters::parse_import_q_scaler(const char** param, int num_param)
     PRINT_INPUT_ERROR("import_q_scaler should be 0 or 1.");
   }
   import_q_scaler = (flag == 1);
+}
+
+void Parameters::parse_efa_mode(const char** param, int num_param)
+{
+  is_efa_mode_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_mode should have 1 parameter (0 or 1).\n");
+  }
+  int flag = 0;
+  if (!is_valid_int(param[1], &flag)) {
+    PRINT_INPUT_ERROR("efa_mode should be an integer (0 or 1).\n");
+  }
+  if (flag != 0 && flag != 1) {
+    PRINT_INPUT_ERROR("efa_mode should be 0 or 1.\n");
+  }
+  efa_mode = (flag == 1);
+}
+
+void Parameters::parse_efa_l_max(const char** param, int num_param)
+{
+  is_efa_l_max_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_l_max should have 1 parameter.\n");
+  }
+  if (!is_valid_int(param[1], &efa_l_max)) {
+    PRINT_INPUT_ERROR("efa_l_max should be an integer.\n");
+  }
+  if (efa_l_max < 1 || efa_l_max > 4) {
+    PRINT_INPUT_ERROR("efa_l_max should be in [1, 4].\n");
+  }
+}
+
+void Parameters::parse_efa_num_radial(const char** param, int num_param)
+{
+  is_efa_num_radial_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_num_radial should have 1 parameter.\n");
+  }
+  if (!is_valid_int(param[1], &efa_num_radial)) {
+    PRINT_INPUT_ERROR("efa_num_radial should be an integer.\n");
+  }
+  if (efa_num_radial < 1 || efa_num_radial > 16) {
+    PRINT_INPUT_ERROR("efa_num_radial should be in [1, 16].\n");
+  }
+}
+
+void Parameters::parse_efa_omega_max(const char** param, int num_param)
+{
+  is_efa_omega_max_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_omega_max should have 1 parameter.\n");
+  }
+  double val = 0.0;
+  if (!is_valid_real(param[1], &val)) {
+    PRINT_INPUT_ERROR("efa_omega_max should be a real number.\n");
+  }
+  efa_omega_max = static_cast<float>(val);
+  if (efa_omega_max <= 0.0f || efa_omega_max > 20.0f) {
+    PRINT_INPUT_ERROR("efa_omega_max should be in (0, 20].\n");
+  }
+}
+
+void Parameters::parse_efa_alpha(const char** param, int num_param)
+{
+  is_efa_alpha_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_alpha should have 1 parameter.\n");
+  }
+  double val = 0.0;
+  if (!is_valid_real(param[1], &val)) {
+    PRINT_INPUT_ERROR("efa_alpha should be a real number.\n");
+  }
+  efa_alpha = static_cast<float>(val);
+  if (efa_alpha <= 0.0f || efa_alpha > 5.0f) {
+    PRINT_INPUT_ERROR("efa_alpha should be in (0, 5].\n");
+  }
+}
+
+void Parameters::parse_efa_lambda_e(const char** param, int num_param)
+{
+  is_efa_lambda_e_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("efa_lambda_e should have 1 parameter.\n");
+  }
+  double val = 0.0;
+  if (!is_valid_real(param[1], &val)) {
+    PRINT_INPUT_ERROR("efa_lambda_e should be a real number.\n");
+  }
+  efa_lambda_e = static_cast<float>(val);
+  if (efa_lambda_e < 0.0f) {
+    PRINT_INPUT_ERROR("efa_lambda_e should be >= 0.\n");
+  }
 }

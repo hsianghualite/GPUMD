@@ -79,6 +79,14 @@ public:
   float q_scaler_input;
   bool import_q_scaler = false; // read q_scaler from the local nep.txt instead of recomputing it
 
+  // EFA (Euclidean Fast Attention) mode parameters.
+  bool efa_mode = false;
+  int efa_l_max = 3;
+  int efa_num_radial = 4;
+  float efa_omega_max = 6.0f;      // maximum frequency (1/Angstrom)
+  float efa_alpha = 0.5f;          // Ewald screening parameter (1/(2 Angstrom))
+  float efa_lambda_e = 1.0f;       // weight for EFA energy loss
+
   // check if a parameter has been set:
   bool is_train_mode_set;
   bool is_prediction_set;
@@ -107,20 +115,33 @@ public:
   bool is_use_typewise_cutoff_zbl_set;
   bool is_charge_mode_set;
   bool is_q_scaler_set;
+  bool is_efa_mode_set = false;
+  bool is_efa_l_max_set = false;
+  bool is_efa_num_radial_set = false;
+  bool is_efa_omega_max_set = false;
+  bool is_efa_alpha_set = false;
+  bool is_efa_lambda_e_set = false;
 
   // other parameters
   int dim;                            // dimension of the descriptor vector
   int dim_radial;                     // number of radial descriptor components
   int dim_angular;                    // number of angular descriptor components
+  int efa_dim = 0;                    // EFA power-spectrum descriptor dimension
   int number_of_variables;            // total number of parameters (NN and descriptor)
   int number_of_variables_ann;        // number of parameters in the ANN only
   int number_of_variables_ann_1;      // number of parameters in the ANN for one element
   int number_of_variables_descriptor; // number of parameters in the descriptor only
+  // EFA parameter counts (only meaningful when efa_mode == true)
+  int number_of_variables_efa = 0;            // total EFA parameters (ANN + descriptor)
+  int number_of_variables_efa_ann = 0;         // EFA ANN parameters (all types + shared bias)
+  int number_of_variables_efa_ann_1 = 0;       // EFA ANN parameters for one element
+  int number_of_variables_efa_descriptor = 0;  // EFA ERoPE radial coefficients
 
   // some arrays
 
   std::vector<float> type_weight_cpu; // relative force weight for different atom types (CPU)
   std::vector<float> q_scaler_cpu;    // used to scale some descriptor components (CPU)
+  std::vector<float> q_scaler_efa_cpu; // used to scale EFA descriptor components (CPU)
   std::vector<std::string> elements;  // atom symbols
   std::vector<int> atomic_numbers;    // atomic numbers
   std::vector<float> zbl_para;        // parameters of zbl potential
@@ -133,6 +154,7 @@ public:
   GPU_Vector<float> q_scaler_gpu[16]; // used to scale some descriptor components (GPU)
   GPU_Vector<float> q_scaler_max[16]; // used to scale some descriptor components (GPU)
   GPU_Vector<float> q_scaler_min[16]; // used to scale some descriptor components (GPU)
+  GPU_Vector<float> q_scaler_efa_gpu[16]; // used to scale EFA descriptor components (GPU)
 
 private:
   void set_default_parameters();
@@ -178,4 +200,10 @@ private:
   void parse_output_interval(const char** param, int num_param);
   void parse_q_scaler(const char** param, int num_param);
   void parse_import_q_scaler(const char** param, int num_param);
+  void parse_efa_mode(const char** param, int num_param);
+  void parse_efa_l_max(const char** param, int num_param);
+  void parse_efa_num_radial(const char** param, int num_param);
+  void parse_efa_omega_max(const char** param, int num_param);
+  void parse_efa_alpha(const char** param, int num_param);
+  void parse_efa_lambda_e(const char** param, int num_param);
 };
