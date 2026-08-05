@@ -55,7 +55,7 @@ private:
   enum class Init_Mode { phase_point, harmonic };
   enum class Phase_Mode { random, zero };
   enum class Mode_Source { automatic_hessian, qct_modes, gpumd_eigenvector };
-  enum class Sampling_Mode { canonical, microcanonical, mode_energy, semiclassical };
+  enum class Sampling_Mode { canonical, microcanonical, mode_energy, semiclassical, wigner };
   enum class Stationary_Point { automatic, minimum, saddle };
   enum class Reaction_Direction { positive, negative, random };
 
@@ -96,6 +96,8 @@ private:
     double reaction_energy = 0.0;
     double potential_correction = 0.0;
     double stable_velocity_scale = 1.0;
+    double wigner_weight = 1.0;
+    double log_wigner_weight = 0.0;
   };
 
   Init_Mode init_mode_ = Init_Mode::phase_point;
@@ -121,6 +123,7 @@ private:
   int replicas_ = 1;
   int atoms_per_replica_ = 0;
   bool zpe_ = true;
+  bool anharmonic_reweight_ = true;
   bool initialized_ = false;
   std::vector<std::uint64_t> replica_seeds_;
   std::vector<Sampled_Point> sampled_points_;

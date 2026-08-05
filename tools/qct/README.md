@@ -173,3 +173,83 @@ python3 tools/qct/merge_qct_results.py \
 
 The merger rejects duplicate replica identifiers and reports status counts,
 channel counts, and branching fractions over valid (`completed`) trajectories.
+
+## LSC-IVR (Linearized Semiclassical Initial Value Representation)
+
+LSC-IVR is a semiclassical dynamics method that captures quantum effects
+(vibrational zero-point energy, tunneling, and thermal quantum fluctuations)
+within a classical trajectory framework. GPUMD implements the "linearized"
+approximation where the initial conditions are sampled from the harmonic
+**Wigner thermal distribution** rather than the classical Boltzmann
+distribution, and quantum corrections are applied through anharmonic
+reweighting.
+
+### Running an LSC-IVR calculation
+
+Use the `wigner` sampling mode with `ensemble qct`:
+
+```text
+potential    nep.txt
+time_step    0.1
+ensemble     qct wigner temperature 300 seed 12345 replicas 64 \
+             hessian_displacement 0.001 anharmonic_reweighting yes
+dump_qct     10
+run          100000
+```
+
+This will:
+1. Compute the molecular Hessian at the optimized geometry
+2. For each replica, draw `(Q_k, P_k)` for every active normal mode from the
+   Wigner distribution with quantum-corrected variance
+3. Compute the anharmonic reweighting weight `w_i` for each replica
+4. Propagate each replica with NVE velocity-Verlet dynamics
+5. Write `qct_trajectory.xyz` (per-replica frames) and `qct_initial_summary.csv`
+   (including the `wigner_weight` and `log_wigner_weight` columns)
+
+### Post-processing: correlation functions
+
+Use `lsc_ivr.py` to compute quantum-corrected time-correlation functions:
+
+```bash
+python3 tools/qct/lsc_ivr.py \
+  --trajectory qct_trajectory.xyz \
+  --summary qct_initial_summary.csv \
+  --config lsc_ivr.json \
+  --output qct_lsc_correlation.csv \
+  --fft qct_lsc_spectrum.csv
+```
+
+The configuration file defines the operators `A` and `B`:
+
+```json
+{
+  "operator_A": {"name": "position", "params": {"atom": 0, "axis": 0}},
+  "operator_B": {"name": "position", "params": {"atom": 0, "axis": 0}}
+}
+```
+
+Available operators:
+
+| Name                 | Parameters                          | Description                              |
+|----------------------|-------------------------------------|------------------------------------------|
+| `position`           | `atom` (0-based), `axis` (0=x,1=y,2=z) | Cartesian position component           |
+| `velocity`           | `atom` (0-based), `axis` (0=x,1=y,2=z) | Cartesian velocity component           |
+| `com_position`       | (optional) `atom_indices`           | Center-of-mass position magnitude        |
+| `com_velocity`       | (optional) `atom_indices`           | Center-of-mass speed                     |
+| `bond_length`        | `atom1`, `atom2` (0-based)          | Distance between two atoms               |
+| `kinetic_energy`     | (optional) `atom_indices`           | Total kinetic energy in eV               |
+| `point_charge_dipole`| `axis`, `charges` (array)           | Dipole moment component from point charges |
+
+The correlation formula is:
+
+```
+C_AB(t) = Σ_i w_i * A(0)_i * B(t)_i  /  Σ_i w_i
+```
+
+where `w_i` is the Wigner weight from `qct_initial_summary.csv` (falls back
+to 1.0 if the column is absent, enabling backward compatibility with
+non-Wigner QCT trajectories).
+
+The `--fft` option produces a spectral density CSV with frequency (THz),
+wavenumber (cm⁻¹), and intensity columns, using a windowed FFT of the
+normalized correlation function.
