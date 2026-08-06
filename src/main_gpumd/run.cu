@@ -36,6 +36,7 @@ Run simulation according to the inputs in the run.in file.
 #include "measure/compute_es.cuh"
 #include "measure/dos.cuh"
 #include "measure/dump_beads.cuh"
+#include "measure/dump_centroid.cuh"
 #include "measure/dump_dipole.cuh"
 #include "measure/dump_exyz.cuh"
 #include "measure/dump_force.cuh"
@@ -382,9 +383,10 @@ void Run::validate_qct_batch_configuration() const
   }
 
   for (const auto& property : measure.properties) {
-    if (property->property_name != "dump_qct") {
+    if (property->property_name != "dump_qct" &&
+        property->property_name != "dump_dipole") {
       PRINT_INPUT_ERROR(
-        "QCT batch only supports dump_qct output until measurements have per-replica reductions.");
+        "QCT batch only supports dump_qct and dump_dipole output until measurements have per-replica reductions.");
     }
   }
 }
@@ -493,6 +495,10 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
   } else if (strcmp(param[0], "dump_beads") == 0) {
     std::unique_ptr<Property> property;
     property.reset(new Dump_Beads(param, num_param));
+    measure.properties.emplace_back(std::move(property));
+  } else if (strcmp(param[0], "dump_centroid") == 0) {
+    std::unique_ptr<Property> property;
+    property.reset(new Dump_Centroid(param, num_param));
     measure.properties.emplace_back(std::move(property));
   } else if (strcmp(param[0], "dump_observer") == 0) {
     std::unique_ptr<Property> property;

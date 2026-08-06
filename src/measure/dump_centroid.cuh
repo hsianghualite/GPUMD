@@ -15,23 +15,15 @@
 
 #pragma once
 #include "property.cuh"
-#include "force/force.cuh"
-#include "integrate/integrate.cuh"
-#include "model/atom.cuh"
-#include "model/group.cuh"
-#include "utilities/gpu_vector.cuh"
+#include <cstdint>
 #include <string>
 #include <vector>
-class Box;
-class Atom;
-class Force;
-class Integrate;
 
-class Dump_Dipole : public Property
+class Dump_Centroid : public Property
 {
 public:
-  Dump_Dipole(const char** param, int num_param);
-  void parse(const char** param, int num_param);
+  Dump_Centroid(const char** param, int num_param);
+
   virtual void preprocess(
     const int number_of_steps,
     const double time_step,
@@ -42,18 +34,18 @@ public:
     Force& force);
 
   virtual void process(
-      const int number_of_steps,
-      int step,
-      const int fixed_group,
-      const int move_group,
-      const double global_time,
-      const double temperature,
-      Integrate& integrate,
-      Box& box,
-      std::vector<Group>& group,
-      GPU_Vector<double>& thermo,
-      Atom& atom,
-      Force& force);
+    const int number_of_steps,
+    int step,
+    const int fixed_group,
+    const int move_group,
+    const double global_time,
+    const double temperature,
+    Integrate& integrate,
+    Box& box,
+    std::vector<Group>& group,
+    GPU_Vector<double>& thermo,
+    Atom& atom,
+    Force& force);
 
   virtual void postprocess(
     Atom& atom,
@@ -64,16 +56,14 @@ public:
     const double temperature);
 
 private:
-  bool dump_ = false;
   int dump_interval_ = 1;
-  bool is_qct_batch_ = false;
-  int atoms_per_replica_ = 0;
-  int replicas_ = 0;
-  FILE* file_;
-  GPU_Vector<double> gpu_dipole_;
-  std::vector<double> cpu_dipole_;
-  std::vector<double> cpu_dipole_batch_;
-  void write_dipole(const int step);
-  void write_dipole_batch(const int step);
-  Atom atom_copy;
+  int number_of_beads_ = 0;
+  std::string trajectory_filename_ = "centroid_trajectory.xyz";
+  std::string thermo_filename_ = "centroid_thermo.csv";
+  FILE* trajectory_ = nullptr;
+  FILE* thermo_ = nullptr;
+  std::vector<double> cpu_position_;
+  std::vector<double> cpu_velocity_;
+  std::vector<double> cpu_potential_;
+  std::vector<double> cpu_mass_;
 };

@@ -8,16 +8,21 @@
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details. You should have received a copy of the GNU General
-   Public License along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU General Public License for more details.
+    You should have received a copy of the GNU General Public License
+    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 /*-----------------------------------------------------------------------------------------------100
-Dump energy/force/virial with all loaded potentials at a given interval.
+Dump dipole with all loaded potentials at a given interval.
+
+In standard (single-trajectory) mode, writes one dipole vector per dump step.
+In QCT batch mode, writes one dipole vector per replica per dump step.
 --------------------------------------------------------------------------------------------------*/
 
 #include "dump_dipole.cuh"
 #include "force/nep.cuh"
+#include "integrate/ensemble_qct.cuh"
 #include "model/box.cuh"
 #include "model/read_xyz.cuh"
 #include "parse_utilities.cuh"
@@ -41,18 +46,14 @@ static __global__ void sum_dipole(
 
   const unsigned int componentIdx = blockIdx.x * N;
 
-  // 1024 threads, each summing a patch of N/1024 atoms
   for (int patch = 0; patch < number_of_patches; ++patch) {
     int atomIdx = tid + patch * 1024;
     if (atomIdx < N)
       d += g_virial_per_atom[componentIdx + atomIdx];
   }
 
-  // save the sum for this patch
   s_d[tid] = d;
   __syncthreads();
-
-  // aggregate the patches in parallel
 
   for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
     if (tid < offset) {
@@ -61,7 +62,6 @@ static __global__ void sum_dipole(
     __syncthreads();
   }
 
-  // save the final value
   if (tid == 0) {
     g_dipole[bid] = s_d[0];
   }
@@ -93,7 +93,6 @@ static __global__ void initialize_properties(
     g_virial[n1 + 8 * N] = 0.0;
   }
   if (n1 == 0) {
-    // Only need to set g_virial_sum to zero once
     g_virial_sum[0] = 0.0;
     g_virial_sum[1] = 0.0;
     g_virial_sum[2] = 0.0;
@@ -129,30 +128,33 @@ void Dump_Dipole::preprocess(
   Box& box,
   Force& force)
 {
-  // Setup a dump_exyz with the dump_interval for dump_observer.
   if (dump_) {
     std::string filename_ = "dipole.out";
     file_ = my_fopen(filename_.c_str(), "a");
     gpu_dipole_.resize(3);
     cpu_dipole_.resize(3);
 
-    // Set up a local copy of the Atoms, on which to compute the dipole
-    // Typically in GPUMD we are limited by computational speed, not memory,
-    // so we can sacrifice a bit of memory to skip having to recompute the forces
-    // & virials with the original potential
     atom_copy.number_of_atoms = atom.number_of_atoms;
     atom_copy.force_per_atom.resize(atom.number_of_atoms * 3);
     atom_copy.virial_per_atom.resize(atom.number_of_atoms * 9);
     atom_copy.potential_per_atom.resize(atom.number_of_atoms);
 
-    // make sure that the second potential is actually a dipole model.
     if (force.potentials.size() != 2) {
       PRINT_INPUT_ERROR("dump_dipole requires two potentials to be specified.");
     }
-    // Multiple potentials may only be used with NEPs, so we know that
-    // the second potential must be an NEP
     if (force.potentials[1]->nep_model_type != 1) {
       PRINT_INPUT_ERROR("dump_dipole requires the second NEP potential to be a dipole model.");
+    }
+
+    // Detect QCT batch mode
+    auto* qct = dynamic_cast<Ensemble_QCT*>(integrate.ensemble.get());
+    if (qct != nullptr && qct->is_batch()) {
+      is_qct_batch_ = true;
+      atoms_per_replica_ = qct->atoms_per_replica();
+      replicas_ = qct->number_of_replicas();
+      cpu_dipole_batch_.resize(replicas_ * 3);
+      printf("    QCT batch mode: %d replicas, %d atoms/replica\n",
+             replicas_, atoms_per_replica_);
     }
   }
 }
@@ -171,7 +173,6 @@ void Dump_Dipole::process(
   Atom& atom,
   Force& force)
 {
-  // Only run if should dump, since forces have to be recomputed with each potential.
   if (!dump_)
     return;
   if (((step + 1) % dump_interval_ != 0))
@@ -188,9 +189,8 @@ void Dump_Dipole::process(
     gpu_dipole_.data());
   GPU_CHECK_KERNEL
 
-  // Compute the dipole
-  // Use the positions and types from the existing atoms object,
-  // but store the results in the local copy.
+  // Compute dipole using the second (dipole) NEP potential.
+  // In QCT batch mode, this evaluates all replicas in one pass.
   force.potentials[1]->compute(
     box,
     atom.type,
@@ -199,20 +199,35 @@ void Dump_Dipole::process(
     atom_copy.force_per_atom,
     atom_copy.virial_per_atom);
 
-  // Aggregate virial_per_atom into dipole
-  const int number_of_threads = 1024;
-  const int number_of_atoms_per_thread = (number_of_atoms - 1) / number_of_threads + 1;
-  sum_dipole<<<3, 1024>>>(
-    number_of_atoms,
-    number_of_atoms_per_thread,
-    atom_copy.virial_per_atom.data(),
-    gpu_dipole_.data());
-  GPU_CHECK_KERNEL
+  if (is_qct_batch_) {
+    // Per-replica dipole: sum virial components (xx, yy, zz) within each replica
+    std::vector<double> cpu_virial(number_of_atoms * 9);
+    atom_copy.virial_per_atom.copy_to_host(cpu_virial.data());
+    for (int r = 0; r < replicas_; ++r) {
+      for (int d = 0; d < 3; ++d) {
+        double sum = 0.0;
+        for (int n = 0; n < atoms_per_replica_; ++n) {
+          const int atom_idx = r * atoms_per_replica_ + n;
+          sum += cpu_virial[d * number_of_atoms + atom_idx];
+        }
+        cpu_dipole_batch_[r * 3 + d] = sum;
+      }
+    }
+    write_dipole_batch(step);
+  } else {
+    // Single-trajectory mode: aggregate all atoms into one dipole
+    const int number_of_threads = 1024;
+    const int number_of_atoms_per_thread = (number_of_atoms - 1) / number_of_threads + 1;
+    sum_dipole<<<3, 1024>>>(
+      number_of_atoms,
+      number_of_atoms_per_thread,
+      atom_copy.virial_per_atom.data(),
+      gpu_dipole_.data());
+    GPU_CHECK_KERNEL
 
-  // Transfer gpu_sum to the CPU
-  gpu_dipole_.copy_to_host(cpu_dipole_.data());
-  // Write properties
-  write_dipole(step);
+    gpu_dipole_.copy_to_host(cpu_dipole_.data());
+    write_dipole(step);
+  }
 }
 
 void Dump_Dipole::write_dipole(const int step)
@@ -220,8 +235,21 @@ void Dump_Dipole::write_dipole(const int step)
   if ((step + 1) % dump_interval_ != 0)
     return;
 
-  // stress components are in Voigt notation: xx, yy, zz, yz, xz, xy
   fprintf(file_, "%d%20.10e%20.10e%20.10e\n", step, cpu_dipole_[0], cpu_dipole_[1], cpu_dipole_[2]);
+  fflush(file_);
+}
+
+void Dump_Dipole::write_dipole_batch(const int step)
+{
+  // Write per-replica dipole: step replica dx dy dz
+  for (int r = 0; r < replicas_; ++r) {
+    fprintf(
+      file_, "%d %d%20.10e%20.10e%20.10e\n",
+      step, r,
+      cpu_dipole_batch_[r * 3 + 0],
+      cpu_dipole_batch_[r * 3 + 1],
+      cpu_dipole_batch_[r * 3 + 2]);
+  }
   fflush(file_);
 }
 

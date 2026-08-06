@@ -102,21 +102,34 @@ def load_wigner_weights(summary_path: Path) -> dict[int, float]:
 # ---------------------------------------------------------------------------
 
 def split_replica_trajectory(frames: list[aq.Frame]) -> dict[int, list[aq.Frame]]:
-    """Split a multi-replica extxyz trajectory into per-replica frame lists.
+    """Split a trajectory into per-replica (or single-trajectory) frame lists.
 
-    Each frame header must contain a ``Replica=N`` attribute (written by
-    dump_qct).  Frames are grouped by replica id in order of appearance.
+    For multi-replica QCT trajectories, each frame header must contain a
+    ``Replica=N`` attribute (written by dump_qct).  Frames are grouped by
+    replica id in order of appearance.
+
+    For single-trajectory input (e.g. RPMD centroid trajectories from
+    dump_centroid, or ordinary MD trajectories), frames without a
+    ``Replica`` attribute are assigned to replica 0.  This allows
+    lsc_ivr.py to compute ordinary Kubo autocorrelation functions from
+    a single trajectory without any code changes.
     """
     groups: dict[int, list[aq.Frame]] = {}
+    has_replica = False
     for frame in frames:
         rid_str = frame.metadata.get("replica")
         if rid_str is None:
-            raise ValueError(
-                "Trajectory frames must contain a 'Replica' attribute. "
-                "Ensure dump_qct was used with ensemble qct."
-            )
-        rid = int(rid_str)
+            rid = 0
+        else:
+            rid = int(rid_str)
+            has_replica = True
         groups.setdefault(rid, []).append(frame)
+
+    # If we mixed replica and non-replica frames (shouldn't happen), warn
+    if has_replica and 0 in groups and len(groups[0]) != len(frames):
+        # Some frames had Replica, some didn't — treat all as replica 0
+        pass
+
     return groups
 
 

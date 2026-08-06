@@ -488,14 +488,30 @@ void Force::configure_qct_batch(const int atoms_per_replica, const int replicas)
   if (atoms_per_replica <= 0 || replicas <= 1) {
     PRINT_INPUT_ERROR("QCT batch requires positive atoms_per_replica and replicas > 1.");
   }
-  if (potentials.size() != 1 || potentials[0]->nep_model_type != 0) {
+  // Allow 1 or 2 potentials: the first must be an ordinary scalar NEP.
+  // A second potential (if present) must be a dipole NEP for dump_dipole.
+  if (potentials.size() < 1 || potentials.size() > 2) {
     PRINT_INPUT_ERROR(
-      "QCT batch currently requires exactly one ordinary scalar NEP potential.");
+      "QCT batch requires one or two NEP potentials (ordinary + optional dipole).");
+  }
+  if (potentials[0]->nep_model_type != 0) {
+    PRINT_INPUT_ERROR(
+      "QCT batch requires the first potential to be an ordinary scalar NEP.");
+  }
+  if (potentials.size() == 2 && potentials[1]->nep_model_type != 1) {
+    PRINT_INPUT_ERROR(
+      "QCT batch second potential must be a dipole NEP model.");
   }
   auto* nep = dynamic_cast<NEP*>(potentials[0].get());
   if (nep == nullptr || !nep->configure_qct_batch(atoms_per_replica, replicas)) {
     PRINT_INPUT_ERROR(
       "The selected potential does not support native QCT batch execution, or the per-atom NEP neighbor capacity is too small.");
+  }
+  // If a dipole NEP is present, set its N2 to the full batch size so it
+  // evaluates all replicas in a single large-box pass.
+  if (potentials.size() == 2) {
+    potentials[1]->N1 = 0;
+    potentials[1]->N2 = atoms_per_replica * replicas;
   }
   qct_batch_enabled_ = true;
   qct_atoms_per_replica_ = atoms_per_replica;

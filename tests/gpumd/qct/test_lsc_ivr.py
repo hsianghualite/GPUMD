@@ -485,13 +485,22 @@ class TestTrajectorySplitting:
         for rid in range(3):
             assert len(groups[rid]) == 4
 
-    def test_missing_replica_attribute_raises(self, tmp_path):
-        traj_path = tmp_path / "bad_trajectory.xyz"
+    def test_missing_replica_attribute_defaults_to_zero(self, tmp_path):
+        """Frames without a Replica attribute are assigned to replica 0.
+
+        This enables lsc_ivr.py to process single-trajectory input such as
+        RPMD centroid trajectories from dump_centroid, or ordinary MD
+        trajectories, without requiring the Replica metadata.
+        """
+        traj_path = tmp_path / "single_trajectory.xyz"
         with open(traj_path, "w") as f:
-            f.write("1\n")
-            f.write('Time=0.0 pbc="F F F" Properties=species:S:1:pos:R:3:mass:R:1:vel:R:3\n')
-            f.write("H 0 0 0 1.0 0 0 0\n")
+            for step in range(3):
+                f.write("1\n")
+                f.write(f'Time={step * 0.5} pbc="F F F" Properties=species:S:1:pos:R:3:mass:R:1:vel:R:3\n')
+                f.write("H 0 0 0 1.0 0 0 0\n")
 
         frames = mod_analyzer.read_extxyz(str(traj_path))
-        with pytest.raises(ValueError, match="Replica"):
-            mod_lsc.split_replica_trajectory(frames)
+        groups = mod_lsc.split_replica_trajectory(frames)
+        assert len(groups) == 1
+        assert 0 in groups
+        assert len(groups[0]) == 3
