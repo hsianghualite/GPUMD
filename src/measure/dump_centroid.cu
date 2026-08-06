@@ -101,7 +101,7 @@ void Dump_Centroid::preprocess(
 static void average_beads_to_host(
   const int N,
   const int P,
-  const std::vector<GPU_Vector<double>>& bead_data,
+  std::vector<GPU_Vector<double>>& bead_data,
   std::vector<double>& cpu_out)
 {
   // bead_data[k] has layout [x0..xN-1, y0..yN-1, z0..zN-1] on device
