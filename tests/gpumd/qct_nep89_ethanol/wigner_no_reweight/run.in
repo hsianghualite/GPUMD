@@ -1,0 +1,5 @@
+potential ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step 0.1
+ensemble qct wigner temperature 300 seed 12345 replicas 64 hessian_displacement 0.001 anharmonic_reweighting no
+dump_qct 1
+run 10000

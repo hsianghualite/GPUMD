@@ -1097,7 +1097,11 @@ Ensemble_QCT::Sampled_Point Ensemble_QCT::sample_harmonic_point(
   }
   } // end non-wigner branch
 
-  if (qct_modes.reaction_mode_index >= 0) {
+  // Wigner (LSC-IVR) sampling does not support reactive trajectories along
+  // imaginary modes; the reaction mode is already marked inactive and simply
+  // skipped.  All other sampling modes inject a reaction momentum here.
+  if (qct_modes.reaction_mode_index >= 0 &&
+      sampling_mode_ != Sampling_Mode::wigner) {
     if (sampling_mode_ != Sampling_Mode::canonical && reaction_energy_eV_ < 0.0) {
       qct_input_error("Non-canonical saddle QCT requires an explicit reaction_energy.");
     }

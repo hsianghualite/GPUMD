@@ -1,0 +1,220 @@
+#!/bin/bash
+#SBATCH --job-name=lsc-ethanol
+#SBATCH --partition=16V100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gpus-per-node=1
+#SBATCH --qos=flood-1o2gpu
+#SBATCH --time=02:00:00
+
+source /etc/profile.d/lmod.sh
+module load cuda/12.4.1
+export OMP_NUM_THREADS=1
+source /opt/sai_config/mps_mapping.d/${SLURM_JOB_PARTITION}.bash
+
+REVIEW_ROOT="$HOME/workdir_sinano-fanzhaochuan/yishangzhao/gpumd-qct-review"
+GPUMD_BIN="${REVIEW_ROOT}/src/gpumd"
+TEST_BASE="${REVIEW_ROOT}/tests/gpumd/qct_nep89_ethanol"
+
+PASS=0
+FAIL=0
+FAILED_TESTS=""
+
+echo "============================================"
+echo "LSC-IVR Ethanol Test Suite - $(date)"
+echo "Binary: ${GPUMD_BIN}"
+echo "Node:   $(hostname)"
+echo "============================================"
+
+run_lsc_test() {
+    local test_name="$1"
+    local test_dir="$2"
+    local op_atom="$3"
+    local op_axis="$4"
+    local op_name="$5"
+
+    echo ""
+    echo "============================================"
+    echo "TEST: ${test_name}"
+    echo "DIR:  ${test_dir}"
+    echo "============================================"
+
+    cd "${test_dir}" 2>/dev/null || { echo "FAIL: cannot cd"; FAIL=$((FAIL+1)); FAILED_TESTS="${FAILED_TESTS} ${test_name}"; return; }
+
+    # Clean generated outputs
+    rm -f gpumd.log thermo.out qct_initial.out qct_initial.xyz qct_trajectory.xyz qct_thermo.csv \
+          qct_hessian.out qct_eigenvector.out qct_stationary.xyz neighbor.out nvidia-smi.log \
+          qct_initial_summary.csv qct_lsc_correlation.csv qct_lsc_spectrum.csv lsc_ivr_config.json
+
+    echo "--- GPU info ---"
+    nvidia-smi -L 2>&1 | head -2
+    echo ""
+    echo "--- run.in ---"
+    cat run.in
+    echo ""
+    echo "--- model.xyz ---"
+    cat model.xyz
+
+    echo ""
+    echo "=== Running GPUMD ==="
+    "${GPUMD_BIN}" > gpumd.log 2>&1
+    local rc=$?
+
+    if [ ${rc} -ne 0 ]; then
+        echo "FAIL: gpumd exited with code ${rc}"
+        echo "--- last 80 lines of gpumd.log ---"
+        tail -80 gpumd.log 2>/dev/null
+        FAIL=$((FAIL+1))
+        FAILED_TESTS="${FAILED_TESTS} ${test_name}"
+        return
+    fi
+    echo "GPUMD exit code: ${rc}"
+
+    echo ""
+    echo "--- gpumd.log (key lines) ---"
+    grep -E "sampling mode|Wigner|reweight|temperature|seed|replica|frequency|Run |Hessian|stationary|mode|atoms" gpumd.log 2>/dev/null | head -40
+
+    echo ""
+    echo "--- Output files ---"
+    ls -la
+
+    echo ""
+    echo "--- qct_initial_summary.csv ---"
+    cat qct_initial_summary.csv 2>/dev/null || { echo "NOT FOUND"; FAIL=$((FAIL+1)); FAILED_TESTS="${FAILED_TESTS} ${test_name}"; return; }
+
+    echo ""
+    echo "--- qct_initial.out (first 40 lines) ---"
+    head -40 qct_initial.out 2>/dev/null || echo "NOT FOUND"
+
+    # Show mode frequency distribution
+    echo ""
+    echo "--- Mode frequency analysis ---"
+    python3 -c "
+import csv
+try:
+    with open('qct_initial.out') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        rows = list(reader)
+    print(f'Total modes: {len(rows)}')
+    active = [r for r in rows if len(r) > 4 and r[-1].strip() == 'yes']
+    print(f'Active modes: {len(active)}')
+    if active:
+        freqs = [float(r[3]) for r in active]
+        print(f'Frequency range: {min(freqs):.1f} - {max(freqs):.1f} THz')
+        print(f'Frequency range: {min(freqs)*33.356:.0f} - {max(freqs)*33.356:.0f} cm-1')
+        # Show top 5 highest frequencies
+        sorted_freqs = sorted(freqs, reverse=True)[:5]
+        print('Top 5 highest frequencies (THz / cm-1):')
+        for f in sorted_freqs:
+            print(f'  {f:.1f} THz = {f*33.356:.0f} cm-1')
+except Exception as e:
+    print(f'Error: {e}')
+" 2>&1
+
+    echo ""
+    echo "============================================"
+    echo "Running lsc_ivr.py post-processing"
+    echo "Operator: ${op_name} (atom=${op_atom}, axis=${op_axis})"
+    echo "============================================"
+
+    # Create config for position autocorrelation
+    cat > lsc_ivr_config.json << JSON
+{
+  "operator_A": {"name": "position", "params": {"atom": ${op_atom}, "axis": ${op_axis}}},
+  "operator_B": {"name": "position", "params": {"atom": ${op_atom}, "axis": ${op_axis}}}
+}
+JSON
+
+    python3 "${REVIEW_ROOT}/tools/qct/lsc_ivr.py" \
+      --trajectory qct_trajectory.xyz \
+      --summary qct_initial_summary.csv \
+      --output qct_lsc_correlation.csv \
+      --fft qct_lsc_spectrum.csv \
+      --time-step 0.1 \
+      --dump-interval 1 \
+      --config lsc_ivr_config.json 2>&1
+
+    if [ $? -ne 0 ]; then
+        echo "FAIL: lsc_ivr.py failed"
+        FAIL=$((FAIL+1))
+        FAILED_TESTS="${FAILED_TESTS} ${test_name}"
+        return
+    fi
+
+    echo ""
+    echo "--- Correlation output (first 20 lines) ---"
+    head -20 qct_lsc_correlation.csv 2>/dev/null
+
+    echo ""
+    echo "--- Correlation output (sampled every 1000 steps) ---"
+    awk 'NR==1 || NR%1000==0' qct_lsc_correlation.csv 2>/dev/null
+
+    echo ""
+    echo "--- Spectrum output (first 20 lines) ---"
+    head -20 qct_lsc_spectrum.csv 2>/dev/null
+
+    # Find peaks in spectrum
+    echo ""
+    echo "--- Spectrum peak analysis ---"
+    python3 -c "
+import csv
+with open('qct_lsc_spectrum.csv') as f:
+    reader = csv.reader(f)
+    next(reader)  # skip header
+    rows = [(float(r[0]), float(r[1]), float(r[2])) for r in reader]
+print(f'Total spectrum points: {len(rows)}')
+print(f'Max frequency: {rows[-1][0]:.1f} THz')
+# Find top 5 peaks excluding first 5 low-freq points (DC + noise)
+sorted_rows = sorted(rows[5:], key=lambda x: x[2], reverse=True)[:10]
+print('Top 10 peaks:')
+for r in sorted_rows:
+    print(f'  freq={r[0]:.4f} THz, wavenumber={r[1]:.2f} cm-1, intensity={r[2]:.6e}')
+
+# Ethanol vibrational modes (expected approximate ranges):
+# C-H stretch:  85-110 THz (2800-3700 cm-1)
+# O-H stretch:  100-115 THz (3300-3800 cm-1)  
+# C-C stretch:  30-40 THz (1000-1300 cm-1)
+# C-O stretch:  30-40 THz (1000-1300 cm-1)
+# C-H bend:     45-60 THz (1500-2000 cm-1)
+# Torsions:     10-30 THz (300-1000 cm-1)
+print()
+print('Reference ethanol vibrational ranges:')
+print('  C-H stretch:  85-110 THz (2800-3700 cm-1)')
+print('  O-H stretch:  100-115 THz (3300-3800 cm-1)')
+print('  C-O stretch:  30-40 THz (1000-1300 cm-1)')
+print('  C-C stretch:  25-35 THz (800-1200 cm-1)')
+print('  C-H bend:     45-60 THz (1500-2000 cm-1)')
+" 2>&1
+
+    echo ""
+    echo "PASS: ${test_name}"
+    PASS=$((PASS+1))
+}
+
+# ============================================================
+# Test 1: Ethanol Wigner with anharmonic reweighting
+# Operator: O atom (atom 2) x-position — captures C-O stretch dynamics
+# ============================================================
+run_lsc_test "ethanol-wigner-reweight-Ox" "${TEST_BASE}/wigner" 2 0 "O_atom_x_position"
+
+# ============================================================
+# Test 2: Ethanol Wigner without anharmonic reweighting
+# Operator: O atom (atom 2) x-position
+# ============================================================
+run_lsc_test "ethanol-wigner-no-reweight-Ox" "${TEST_BASE}/wigner_no_reweight" 2 0 "O_atom_x_position"
+
+# ============================================================
+# Summary
+# ============================================================
+echo ""
+echo "============================================"
+echo "SUMMARY"
+echo "============================================"
+echo "PASS: ${PASS}"
+echo "FAIL: ${FAIL}"
+if [ ${FAIL} -gt 0 ]; then
+    echo "FAILED TESTS:${FAILED_TESTS}"
+fi
+echo "============================================"
+echo "Done - $(date)"
