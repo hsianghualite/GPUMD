@@ -73,8 +73,10 @@ class CorrelationResult:
 def load_wigner_weights(summary_path: Path) -> dict[int, float]:
     """Load per-replica Wigner weights from qct_initial_summary.csv.
 
-    Returns a dict ``{replica_id: weight}``.  If the file does not contain
-    a ``wigner_weight`` column, all weights default to 1.0.
+    Returns a dict ``{replica_id: weight}``.  Prefers ``log_wigner_weight``
+    when available for numerical stability (avoids overflow/underflow that
+    can occur in the C++ ``exp()`` call).  Falls back to ``wigner_weight``
+    column.  If neither column is present, all weights default to 1.0.
     """
     weights: dict[int, float] = {}
     if not summary_path.is_file():
@@ -83,17 +85,33 @@ def load_wigner_weights(summary_path: Path) -> dict[int, float]:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             return weights
+        has_log_weight = "log_wigner_weight" in reader.fieldnames
         has_weight = "wigner_weight" in reader.fieldnames
+        if not has_log_weight and not has_weight:
+            # No weight columns: default all to 1.0
+            for row in reader:
+                weights[int(row["replica"])] = 1.0
+            return weights
         for row in reader:
             rid = int(row["replica"])
-            if has_weight:
+            if has_log_weight:
+                log_w = float(row["log_wigner_weight"])
+                if not math.isfinite(log_w) or log_w < -745.0:
+                    # -745 is where double exp() underflows to 0.0;
+                    # treat as zero-weight sample (e.g. C++ wrote -999 sentinel)
+                    w = 0.0
+                elif log_w > 700.0:
+                    # Would overflow; clamp to a very large weight
+                    w = math.exp(700.0)
+                else:
+                    w = math.exp(log_w)
+                weights[rid] = w
+            else:
                 w = float(row["wigner_weight"])
                 # Guard against underflow/overflow
                 if not math.isfinite(w) or w <= 0.0:
                     w = 0.0  # zero-weight samples contribute nothing
                 weights[rid] = w
-            else:
-                weights[rid] = 1.0
     return weights
 
 
@@ -116,19 +134,25 @@ def split_replica_trajectory(frames: list[aq.Frame]) -> dict[int, list[aq.Frame]
     """
     groups: dict[int, list[aq.Frame]] = {}
     has_replica = False
+    has_no_replica = False
     for frame in frames:
         rid_str = frame.metadata.get("replica")
         if rid_str is None:
             rid = 0
+            has_no_replica = True
         else:
             rid = int(rid_str)
             has_replica = True
         groups.setdefault(rid, []).append(frame)
 
-    # If we mixed replica and non-replica frames (shouldn't happen), warn
-    if has_replica and 0 in groups and len(groups[0]) != len(frames):
-        # Some frames had Replica, some didn't — treat all as replica 0
-        pass
+    # Mixed replica/non-replica frames indicate a malformed trajectory file.
+    if has_replica and has_no_replica:
+        raise ValueError(
+            "Trajectory contains a mix of frames with and without a 'replica' "
+            "attribute. This indicates a malformed or concatenated trajectory. "
+            "Please ensure all frames consistently include or omit the replica "
+            "attribute."
+        )
 
     return groups
 
@@ -324,13 +348,25 @@ def compute_correlation(
     for rid, frames in replica_trajs.items():
         a0_values[rid] = op_a(frames[0])
 
-    # Accumulate weighted correlation
+    # Accumulate weighted correlation using importance-sampling estimator.
+    #
+    # The LSC-IVR correlation function is:
+    #   C_AB(t) = <w A(0) B(t)> / <w>
+    #
+    # where w_i are Wigner importance weights.  The correct standard error
+    # for a ratio estimator <w f> / <w> is obtained from the variance of
+    # the *ratio* random variable, not the raw weighted sum.  Specifically:
+    #
+    #   Var[C_hat] ≈ (1/N) * [ <w² (f - C)²> / <w>² ]
+    #
+    # where f = A(0)*B(t) and C = <w f> / <w>.  This requires a two-pass
+    # computation: first compute the mean C_hat, then compute the weighted
+    # variance of (f - C_hat) with weights w.
     c_ab = np.zeros(max_lag, dtype=float)
     weight_sum = np.zeros(max_lag, dtype=float)
     n_samples = np.zeros(max_lag, dtype=int)
-    # For standard error: accumulate sum of (w_i * A(0)_i * B(t)_i)^2
-    c_ab_sq = np.zeros(max_lag, dtype=float)
 
+    # Pass 1: compute weighted mean
     for rid, frames in replica_trajs.items():
         w = weights.get(rid, 1.0)
         a0 = a0_values[rid]
@@ -341,7 +377,6 @@ def compute_correlation(
             contrib = w * a0 * bt
             c_ab[lag] += contrib
             weight_sum[lag] += w
-            c_ab_sq[lag] += contrib * contrib
             n_samples[lag] += 1
 
     # Normalize: C_AB(t) = Σ w_i A(0)_i B(t)_i / Σ w_i
@@ -352,12 +387,24 @@ def compute_correlation(
 
     c_normalized = c_ab / norm
 
-    # Standard error of the mean: σ/sqrt(N)
-    # σ² = [<w² A² B²> - <w A B>²] / N
+    # Pass 2: compute weighted variance for standard error
+    # Var[C_hat(t)] ≈ (1/N) * Σ_i [ w_i² (f_i - C_hat)² ] / (Σ w_i)²
+    weighted_var = np.zeros(max_lag, dtype=float)
+    for rid, frames in replica_trajs.items():
+        w = weights.get(rid, 1.0)
+        a0 = a0_values[rid]
+        for lag in range(max_lag):
+            if lag >= len(frames):
+                break
+            bt = op_b(frames[lag])
+            f_i = a0 * bt
+            residual = f_i - c_normalized[lag]
+            weighted_var[lag] += (w * w) * (residual * residual)
+
     with np.errstate(invalid="ignore", divide="ignore"):
         variance = np.where(
             n_samples > 1,
-            np.maximum(c_ab_sq / np.maximum(weight_sum, 1e-30) - (c_ab / np.maximum(weight_sum, 1e-30))**2, 0.0),
+            weighted_var / np.maximum(weight_sum * weight_sum, 1e-60),
             0.0,
         )
         std_error = np.sqrt(variance / np.maximum(n_samples, 1))

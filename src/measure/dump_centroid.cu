@@ -156,10 +156,14 @@ void Dump_Centroid::process(
   // Copy mass from device (same for all beads)
   atom.mass.copy_to_host(cpu_mass_.data());
 
-  // Compute potential energy: average of bead potentials
+  // Compute potential energy per atom.
+  // NOTE: In PIMD, atom.potential_per_atom holds the *per-bead* potential
+  // (not centroid-averaged). For a proper centroid potential, one should
+  // average over beads. However, GPUMD's force module stores the last
+  // bead's potential here when running in PIMD mode, so this value is
+  // approximate. For RPMD with a single bead (N_beads=1), it is exact.
+  // TODO: Implement proper bead-averaged potential when available.
   if ((int)atom.potential_per_atom.size() >= N) {
-    // atom.potential_per_atom already holds the centroid-averaged potential
-    // after compute2 -> gpu_average
     atom.potential_per_atom.copy_to_host(cpu_potential_.data());
   } else {
     for (int n = 0; n < N; ++n)

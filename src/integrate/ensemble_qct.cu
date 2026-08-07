@@ -286,6 +286,7 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
   bool has_min_frequency = false;
   bool has_hessian_displacement = false;
   bool has_temperature = false;
+  bool has_zpe = false;
   bool has_energy = false;
   bool has_mode = false;
   bool has_vibrational_quantum = false;
@@ -392,6 +393,7 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
       }
     } else if (strcmp(param[i], "zpe") == 0) {
       zpe_ = parse_yes_no(param[i + 1], "zpe");
+      has_zpe = true;
     } else if (strcmp(param[i], "anharmonic_reweighting") == 0) {
       anharmonic_reweight_ = parse_yes_no(param[i + 1], "anharmonic_reweighting");
     } else if (strcmp(param[i], "phase") == 0) {
@@ -414,8 +416,13 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
     PRINT_INPUT_ERROR(
       "hessian_displacement for ensemble qct harmonic is only valid without an external mode source.");
   }
-  if (has_modes && (has_exclude_lowest || has_min_frequency)) {
-    PRINT_INPUT_ERROR("exclude_lowest and min_frequency are only valid with eigenvector FILE.");
+  if (has_modes && has_exclude_lowest) {
+    PRINT_INPUT_ERROR("exclude_lowest is only valid with eigenvector FILE or auto Hessian.");
+  }
+  // min_frequency is allowed with eigenvector FILE or auto Hessian,
+  // but not with external qct_modes (which already have explicit mode list).
+  if (has_modes && has_min_frequency) {
+    PRINT_INPUT_ERROR("min_frequency is only valid with eigenvector FILE or auto Hessian.");
   }
   if (sampling_mode_ == Sampling_Mode::canonical && !has_temperature) {
     PRINT_INPUT_ERROR("ensemble qct canonical requires temperature T.");
@@ -436,6 +443,9 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
     }
     if (stationary_point_ == Stationary_Point::saddle) {
       PRINT_INPUT_ERROR("ensemble qct wigner does not support saddle points; use minimum or auto.");
+    }
+    if (has_zpe && !zpe_) {
+      PRINT_INPUT_ERROR("ensemble qct wigner always includes zero-point energy; remove 'zpe no'.");
     }
   }
   mode_source_ = has_modes ? Mode_Source::qct_modes :
