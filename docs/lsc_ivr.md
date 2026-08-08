@@ -50,8 +50,7 @@ H 15.46217931 15.00000000 15.00000000 1.00800000
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     lsc_ivr 300 seed 12345 replicas 64 \
-             hessian_displacement 0.001 anharmonic_reweighting yes
+ensemble     lsc_ivr 300 seed 12345 replicas 64 hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     10
 run          100000
 ```
@@ -307,8 +306,7 @@ window function applied.
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     lsc_ivr 300 seed 12345 replicas 32 \
-             hessian_displacement 0.001 anharmonic_reweighting yes
+ensemble     lsc_ivr 300 seed 12345 replicas 32 hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     1
 run          5000
 ```
@@ -330,8 +328,7 @@ the OH stretch vibration.
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     lsc_ivr 300 seed 12345 replicas 64 \
-             hessian_displacement 0.001 anharmonic_reweighting yes
+ensemble     lsc_ivr 300 seed 12345 replicas 64 hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     1
 run          10000
 ```
@@ -353,8 +350,7 @@ first with an external tool (e.g., ASE) to avoid saddle-point classification.
 ### Example 3: Ground-State Wigner (T=0)
 
 ```
-ensemble     lsc_ivr 0 seed 42 replicas 128 \
-             anharmonic_reweighting no
+ensemble     lsc_ivr 0 seed 42 replicas 128 anharmonic_reweighting no
 ```
 
 At T=0, `coth → 1` and each mode is sampled from the ground-state Wigner

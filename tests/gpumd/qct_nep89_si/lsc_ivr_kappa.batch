@@ -101,10 +101,13 @@ ncols = data.shape[1]
 t = data[:, 0]
 print(f'HAC data: {data.shape[0]} rows, {ncols} columns')
 print(f'Time range: {t[0]:.1f} - {t[-1]:.1f} fs')
-if ncols >= 19:
-    kx = data[:, 16]
-    ky = data[:, 17]
-    kz = data[:, 18]
+# hac.out format: time(ps), hac_xi, hac_xo, hac_yi, hac_yo, hac_z,
+#                 rtc_xi, rtc_xo, rtc_yi, rtc_yo, rtc_z (11 columns)
+# kx = rtc_xi + rtc_xo, ky = rtc_yi + rtc_yo, kz = rtc_z
+if ncols == 11:
+    kx = data[:, 6] + data[:, 7]
+    ky = data[:, 8] + data[:, 9]
+    kz = data[:, 10]
     print(f'kappa_x at end: {kx[-1]:.4f} W/m/K')
     print(f'kappa_y at end: {ky[-1]:.4f} W/m/K')
     print(f'kappa_z at end: {kz[-1]:.4f} W/m/K')

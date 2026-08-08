@@ -33,13 +33,11 @@ conductivity via the Green-Kubo relation.
 
 #pragma once
 #include "ensemble_qct.cuh"
-#include <string>
-#include <vector>
 
 class Ensemble_LSC_IVR : public Ensemble_QCT
 {
 public:
-  // Transforms "ensemble lsc_ivr T ..." into "ensemble qct wigner T ..."
+  // Transforms "ensemble lsc_ivr T ..." into "ensemble qct wigner temperature T ..."
   // and delegates to the Ensemble_QCT constructor.
   Ensemble_LSC_IVR(const char** param, int num_param);
   virtual ~Ensemble_LSC_IVR(void) = default;
