@@ -153,4 +153,10 @@ private:
   void write_initial_outputs(const QCT_Modes& qct_modes, const Box& box) const;
   void initialize_harmonic_replicas(
     Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force);
+
+public:
+  // Returns the sampling temperature, used by the Integrate layer to set
+  // temperature1/temperature2 so that measurement keywords (compute_hac, etc.)
+  // receive the correct T for the Green-Kubo prefactor.
+  double get_sample_temperature() const { return sample_temperature_; }
 };

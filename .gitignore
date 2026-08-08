@@ -26,3 +26,7 @@ __pycache__/
 */__pycache__/
 README.gnep.md
 push-to-both.sh
+docs/nep_multi_pes_analysis.md
+docs/delta_ml_dpem_detailed.md
+docs/nep_multi_pes_additional_approaches.md
+tools/qct/LSC_IVR_CODE_REVIEW.md

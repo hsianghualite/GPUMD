@@ -456,7 +456,13 @@ void Integrate::parse_ensemble(
     temperature2 = ptr_temp->t_stop;
   } else if (strcmp(param[1], "qct") == 0) {
     type = -13;
-    ensemble.reset(new Ensemble_QCT(param, num_param));
+    Ensemble_QCT* ptr_temp = new Ensemble_QCT(param, num_param);
+    ensemble.reset(ptr_temp);
+    // QCT ensemble sets the sample temperature; use it as the target
+    // temperature so that measurement keywords (e.g. compute_hac) receive
+    // the correct T for the Green-Kubo prefactor.
+    temperature1 = ptr_temp->get_sample_temperature();
+    temperature2 = ptr_temp->get_sample_temperature();
   } else if (strcmp(param[1], "heat_nhc") == 0) {
     type = 21;
     if (num_param != 7) {
