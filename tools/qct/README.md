@@ -176,19 +176,17 @@ channel counts, and branching fractions over valid (`completed`) trajectories.
 
 ## LSC-IVR (Linearized Semiclassical Initial Value Representation)
 
-LSC-IVR is a semiclassical dynamics method that captures quantum effects
-(vibrational zero-point energy, tunneling, and thermal quantum fluctuations)
-within a classical trajectory framework. GPUMD implements the "linearized"
-approximation where the initial conditions are sampled from the harmonic
-**Wigner thermal distribution** rather than the classical Boltzmann
-distribution, and quantum corrections are applied through anharmonic
-reweighting.
+LSC-IVR is a semiclassical dynamics method that captures quantum
+effects—zero-point energy, tunneling, and thermal quantum
+fluctuations—within a classical trajectory framework.  GPUMD implements
+it as a `wigner` sampling mode of the QCT engine: initial conditions are
+drawn from the harmonic Wigner thermal distribution, propagated with
+ordinary NVE dynamics, and quantum-corrected time-correlation functions
+are computed through anharmonic reweighting.
 
-### Running an LSC-IVR calculation
+### Quick start
 
-Use the `wigner` sampling mode with `ensemble qct`:
-
-```text
+```
 potential    nep.txt
 time_step    0.1
 ensemble     qct wigner temperature 300 seed 12345 replicas 64 \
@@ -197,18 +195,7 @@ dump_qct     10
 run          100000
 ```
 
-This will:
-1. Compute the molecular Hessian at the optimized geometry
-2. For each replica, draw `(Q_k, P_k)` for every active normal mode from the
-   Wigner distribution with quantum-corrected variance
-3. Compute the anharmonic reweighting weight `w_i` for each replica
-4. Propagate each replica with NVE velocity-Verlet dynamics
-5. Write `qct_trajectory.xyz` (per-replica frames) and `qct_initial_summary.csv`
-   (including the `wigner_weight` and `log_wigner_weight` columns)
-
-### Post-processing: correlation functions
-
-Use `lsc_ivr.py` to compute quantum-corrected time-correlation functions:
+Post-process with:
 
 ```bash
 python3 tools/qct/lsc_ivr.py \
@@ -216,10 +203,12 @@ python3 tools/qct/lsc_ivr.py \
   --summary qct_initial_summary.csv \
   --config lsc_ivr.json \
   --output qct_lsc_correlation.csv \
-  --fft qct_lsc_spectrum.csv
+  --fft qct_lsc_spectrum.csv \
+  --time-step 0.1 \
+  --dump-interval 10
 ```
 
-The configuration file defines the operators `A` and `B`:
+Config file defines operators A and B:
 
 ```json
 {
@@ -228,28 +217,98 @@ The configuration file defines the operators `A` and `B`:
 }
 ```
 
-Available operators:
+### Input parameters for `ensemble qct wigner`
 
-| Name                 | Parameters                          | Description                              |
-|----------------------|-------------------------------------|------------------------------------------|
-| `position`           | `atom` (0-based), `axis` (0=x,1=y,2=z) | Cartesian position component           |
-| `velocity`           | `atom` (0-based), `axis` (0=x,1=y,2=z) | Cartesian velocity component           |
-| `com_position`       | (optional) `atom_indices`           | Center-of-mass position magnitude        |
-| `com_velocity`       | (optional) `atom_indices`           | Center-of-mass speed                     |
-| `bond_length`        | `atom1`, `atom2` (0-based)          | Distance between two atoms               |
-| `kinetic_energy`     | (optional) `atom_indices`           | Total kinetic energy in eV               |
-| `point_charge_dipole`| `axis`, `charges` (array)           | Dipole moment component from point charges |
+| Keyword | Required | Default | Description |
+|---------|----------|---------|-------------|
+| `temperature` | yes | — | Sampling temperature (K). Use `0` for ground-state Wigner. |
+| `seed` | no | random | Random seed for reproducible sampling |
+| `replicas` | no | 1 | Number of independent trajectories |
+| `hessian_displacement` | no | 0.001 Å | Finite-difference Hessian displacement |
+| `anharmonic_reweighting` | no | yes | Compute anharmonic reweighting weights |
+| `stationary_point` | no | auto | Must be `minimum` or `auto` (not `saddle`) |
+| `min_frequency` | no | 0.001 THz | Minimum frequency for active modes (works with auto Hessian) |
+| `eigenvector` | no | — | External eigenvector file |
+| `modes` | no | — | External `qct_modes.in` file |
 
-The correlation formula is:
+**Constraints**: `zpe no` is rejected (Wigner always includes ZPE).
+`saddle` is rejected (use `minimum` or `auto`).  If the auto Hessian
+detects a strongly imaginary mode, the structure is classified as a
+saddle point and Wigner sampling is aborted.
+
+### Operators
+
+| Name | Parameters | Description |
+|------|-----------|-------------|
+| `position` | `atom`, `axis` | Cartesian position component |
+| `velocity` | `atom`, `axis` | Cartesian velocity component |
+| `com_position` | `atom_indices` (optional) | Center-of-mass position magnitude |
+| `com_velocity` | `atom_indices` (optional) | Center-of-mass speed |
+| `bond_length` | `atom1`, `atom2` | Distance between two atoms |
+| `kinetic_energy` | `atom_indices` (optional) | Total kinetic energy (eV) |
+| `point_charge_dipole` | `axis`, `charges` | Dipole moment component from point charges |
+
+### Output files
+
+| File | Description |
+|------|-------------|
+| `qct_initial_summary.csv` | Per-replica summary with `wigner_weight` and `log_wigner_weight` columns |
+| `qct_trajectory.xyz` | Multi-replica extxyz trajectory (positions, velocities, masses) |
+| `qct_thermo.csv` | Per-replica per-step energy diagnostics |
+| `qct_initial.out` | Human-readable initial-condition audit |
+
+### Correlation formula
 
 ```
-C_AB(t) = Σ_i w_i * A(0)_i * B(t)_i  /  Σ_i w_i
+C_AB(t) = Σ_i w_i · A(0)_i · B(t)_i  /  Σ_i w_i
 ```
 
-where `w_i` is the Wigner weight from `qct_initial_summary.csv` (falls back
-to 1.0 if the column is absent, enabling backward compatibility with
-non-Wigner QCT trajectories).
+Standard error uses importance-sampling (ratio estimator) variance:
 
-The `--fft` option produces a spectral density CSV with frequency (THz),
-wavenumber (cm⁻¹), and intensity columns, using a windowed FFT of the
-normalized correlation function.
+```
+Var[Ĉ(t)] ≈ (1/N) · Σ_i [ w_i² · (f_i - Ĉ)² ] / (Σ_i w_i)²
+```
+
+### `lsc_ivr.py` command-line options
+
+| Option | Description |
+|--------|-------------|
+| `--trajectory` | Multi-replica QCT trajectory (extxyz) — **required** |
+| `--summary` | `qct_initial_summary.csv` with Wigner weights |
+| `--config` | JSON config defining operators A and B — **required** |
+| `--output` | Output correlation CSV (default: `qct_lsc_correlation.csv`) |
+| `--fft` | Write FFT spectral density to this CSV |
+| `--max-lag` | Maximum correlation lag in fs |
+| `--window` | FFT window: `hann` (default), `hamming`, `bartlett`, `none` |
+| `--time-step` | MD time step in fs (if trajectory lacks `Time=`) |
+| `--dump-interval` | Dump interval in steps (if trajectory lacks `Time=`) |
+
+### Tested systems
+
+| System | Atoms | Replicas | Steps | Sampling | Peak (THz) |
+|--------|-------|----------|-------|----------|------------|
+| OH radical | 2 | 32 | 5000 | Wigner + reweight | ~112–115 |
+| Ethanol C₂H₆O | 9 | 64 | 10000 | Wigner + reweight | 4.2–112.3 (20 modes) |
+
+### Slurm batch scripts
+
+Reference Slurm batch scripts for HPC:
+
+* `tests/gpumd/qct_nep89_oh/lsc_ivr.batch` — OH radical test
+* `tests/gpumd/qct_nep89_ethanol/lsc_ivr.batch` — ethanol test
+
+### Full documentation
+
+For complete documentation including theory, physical constants,
+troubleshooting, and examples, see [`docs/lsc_ivr.md`](../../docs/lsc_ivr.md).
+
+## Semiclassical methods roadmap
+
+For the broader semiclassical methods roadmap (LSC-IVR, RPMD correlation,
+SC-IVR/FBTS, PLDM), see [`SEMICLASSICAL_ROADMAP.md`](SEMICLASSICAL_ROADMAP.md).
+
+The SC-IVR/FBTS implementation plan is documented in
+[`SC_IVR_FBTS_PLAN.md`](SC_IVR_FBTS_PLAN.md).
+
+The LSC-IVR code review (20 issues found, 6 fixed) is documented in
+[`LSC_IVR_CODE_REVIEW.md`](LSC_IVR_CODE_REVIEW.md).

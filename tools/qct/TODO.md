@@ -1,6 +1,6 @@
 # Native QCT TODO
 
-Status is based on `qct` commit `c8208013`.
+Status is based on `qct` commit `b479062c`.
 
 ## Current Scope
 
@@ -13,6 +13,19 @@ single-GPU replica batching with ordinary scalar NEP.
 
 The following work remains before this is a complete small-molecule
 scattering/QCT workflow.
+
+## LSC-IVR Implementation (complete)
+
+- [x] Wigner thermal distribution sampling (`wigner` mode in `ensemble qct`)
+- [x] Anharmonic reweighting with `wigner_weight` / `log_wigner_weight` output
+- [x] `lsc_ivr.py` post-processor: weighted correlation, FFT spectrum, 7 operators
+- [x] Saddle-point guard for Wigner (skip reaction-momentum injection)
+- [x] `2π` frequency conversion bug fix
+- [x] LSC-IVR user documentation (`docs/lsc_ivr.md`)
+- [x] Tested on OH radical (2 atoms) and ethanol (9 atoms) on sai GPU cluster
+- [x] Code review completed (`LSC_IVR_CODE_REVIEW.md`, 22 issues found)
+- [x] Top 6 bugs fixed (BUG-11, BUG-3, ISSUE-5, ISSUE-4, BUG-12, BUG-21)
+- [x] SC-IVR/FBTS implementation plan (`SC_IVR_FBTS_PLAN.md`)
 
 ## 1. Restore A Reproducible Baseline
 
@@ -115,11 +128,11 @@ scattering/QCT workflow.
 
 - [x] Keep command examples synchronized with files that actually exist in
   `tools/qct/` and `tests/gpumd/qct/`.
-- [~] Document output schemas for `qct_initial.out`, `qct_initial.xyz`,
-  `qct_initial_summary.csv`, `qct_trajectory.xyz`, and `qct_thermo.csv`. (`kinetic_temperature_K` documented as raw diagnostic; full schema doc still partial)
-- [ ] Add a short limitations section to the main QCT input documentation,
+- [x] Document output schemas for `qct_initial.out`, `qct_initial.xyz`,
+  `qct_initial_summary.csv`, `qct_trajectory.xyz`, and `qct_thermo.csv`. (Full schema in `docs/lsc_ivr.md`; `kinetic_temperature_K` documented as raw diagnostic.)
+- [x] Add a short limitations section to the main QCT input documentation,
   especially for scalar-NEP batching, NVE-only propagation, and saddle
-  topology checks.
-- [ ] Publish one complete beginner workflow: PES -> ASE optimization/frequency
+  topology checks. (Covered in `docs/lsc_ivr.md` and README limitations.)
+- [~] Publish one complete beginner workflow: PES -> ASE optimization/frequency
   -> sampling -> QCT propagation -> reaction classification -> scattering
-  statistics -> final-state analysis.
+  statistics -> final-state analysis. (LSC-IVR workflow documented in `docs/lsc_ivr.md`; QCT scattering workflow still pending.)
