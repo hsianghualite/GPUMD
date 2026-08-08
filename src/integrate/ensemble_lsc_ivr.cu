@@ -21,8 +21,12 @@ machinery.  The key difference is that LSC-IVR allows periodic boundary
 conditions (PBC), making it suitable for condensed-phase systems.
 
 The constructor transforms the user's "lsc_ivr" ensemble specification
-into the equivalent "qct wigner" specification, so that all parsing and
-Wigner-sampling code in Ensemble_QCT is reused without duplication.
+into the equivalent "qct wigner temperature T ..." specification, so that
+all parsing and Wigner-sampling code in Ensemble_QCT is reused without
+duplication.
+
+  User input:     ensemble lsc_ivr T [key=value ...]
+  Transformed to:  ensemble qct wigner temperature T [key=value ...]
 ------------------------------------------------------------------------------*/
 
 #include "ensemble_lsc_ivr.cuh"
@@ -31,12 +35,9 @@ Wigner-sampling code in Ensemble_QCT is reused without duplication.
 #include <string>
 #include <vector>
 
-// We use a file-scope static storage for the transformed parameter strings.
-// This is safe because:
-// 1. Only one ensemble is constructed at a time (GPUMD is single-threaded for setup).
-// 2. The Ensemble_QCT constructor only reads the params during construction;
-//    it copies any string values (file paths, etc.) into its own std::string members.
-// 3. After construction returns, this storage is no longer needed.
+// File-scope static storage for the transformed parameter strings.
+// Safe because GPUMD is single-threaded during setup, and Ensemble_QCT
+// copies any string values into its own members during construction.
 namespace
 {
 std::vector<std::string> g_param_strings;
@@ -46,18 +47,23 @@ std::vector<const char*> g_param_argv;
 
 Ensemble_LSC_IVR::Ensemble_LSC_IVR(const char** param, int num_param)
   : Ensemble_QCT([](const char** p, int n) -> const char** {
-      // Transform "ensemble lsc_ivr T [key=value ...]"
-      // into    "ensemble qct    wigner T [key=value ...]"
+      // Transform:  ensemble lsc_ivr T [key=value ...]
+      // Into:        ensemble qct wigner temperature T [key=value ...]
+      //
+      // We replace param[1]="lsc_ivr" with "qct", insert "wigner" at
+      // position 2, insert "temperature" at position 3, then copy T and
+      // all remaining key-value pairs from the original positions 2..n-1.
       g_param_strings.clear();
       g_param_buffers.clear();
       g_param_argv.clear();
 
-      g_param_strings.reserve(n + 1);
+      g_param_strings.reserve(n + 2); // +2 for "wigner" and "temperature"
       g_param_strings.push_back(std::string(p[0])); // "ensemble"
-      g_param_strings.push_back("qct");
-      g_param_strings.push_back("wigner");
+      g_param_strings.push_back("qct");              // replaces "lsc_ivr"
+      g_param_strings.push_back("wigner");           // sampling mode
+      g_param_strings.push_back("temperature");      // keyword before T
       for (int i = 2; i < n; ++i) {
-        g_param_strings.push_back(std::string(p[i]));
+        g_param_strings.push_back(std::string(p[i])); // T and key-value pairs
       }
 
       g_param_buffers.reserve(g_param_strings.size());
@@ -69,10 +75,10 @@ Ensemble_LSC_IVR::Ensemble_LSC_IVR(const char** param, int num_param)
       }
       return g_param_argv.data();
     }(param, num_param),
-    num_param + 1)
+    num_param + 2) // +2 for "wigner" and "temperature"
 {
   // The base class constructor has already parsed everything as
-  // "qct wigner T ..." and set up Wigner sampling.
+  // "qct wigner temperature T ..." and set up Wigner sampling.
   // Override the ensemble type to distinguish LSC-IVR from QCT.
   type = -14;
 

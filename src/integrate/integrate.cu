@@ -164,6 +164,7 @@ void Integrate::initialize(
     case -12: // npt_qtb
       break;
     case -13: // qct
+    case -14: // lsc_ivr
       break;
     case 21: // heat-NHC
       ensemble.reset(new Ensemble_NHC(
@@ -1042,6 +1043,7 @@ void Integrate::parse_ensemble(
     case -12: // npt_qtb (self-parsed)
       break;
     case -13:
+    case -14: // lsc_ivr
       break;
     case 21:
       printf("Integrate with heating and cooling for this run.\n");

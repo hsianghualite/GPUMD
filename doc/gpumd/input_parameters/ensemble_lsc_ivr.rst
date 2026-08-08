@@ -39,7 +39,7 @@ Parameters
 All parameters accepted by ``ensemble qct wigner`` are also accepted by
 ``ensemble lsc_ivr``:
 
-``temperature`` (implicit)
+``temperature`` (implicit, inserted automatically)
   The first positional argument ``T`` sets the Wigner sampling temperature.
 
 ``seed``

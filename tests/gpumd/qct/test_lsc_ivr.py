@@ -517,21 +517,22 @@ class TestTrajectorySplitting:
 def test_lsc_ivr_param_transform_basic():
     """Verify the parameter transformation logic used by Ensemble_LSC_IVR."""
     # Input: ensemble lsc_ivr 300 seed 12345 replicas 1
-    # Expected QCT params: ensemble qct wigner 300 seed 12345 replicas 1
+    # Expected QCT params: ensemble qct wigner temperature 300 seed 12345 replicas 1
     input_params = ["ensemble", "lsc_ivr", "300", "seed", "12345", "replicas", "1"]
     num_param = len(input_params)
 
-    # Simulate the transformation
+    # Simulate the transformation: insert "wigner" and "temperature"
     strings = []
     strings.append(input_params[0])  # "ensemble"
     strings.append("qct")
     strings.append("wigner")
+    strings.append("temperature")
     for i in range(2, num_param):
         strings.append(input_params[i])
 
-    expected = ["ensemble", "qct", "wigner", "300", "seed", "12345", "replicas", "1"]
+    expected = ["ensemble", "qct", "wigner", "temperature", "300", "seed", "12345", "replicas", "1"]
     assert strings == expected
-    assert len(strings) == num_param + 1  # one extra for "wigner"
+    assert len(strings) == num_param + 2  # +2 for "wigner" and "temperature"
 
 
 def test_lsc_ivr_param_transform_with_options():
@@ -542,12 +543,12 @@ def test_lsc_ivr_param_transform_with_options():
     ]
     num_param = len(input_params)
 
-    strings = [input_params[0], "qct", "wigner"]
+    strings = [input_params[0], "qct", "wigner", "temperature"]
     for i in range(2, num_param):
         strings.append(input_params[i])
 
     expected = [
-        "ensemble", "qct", "wigner", "0", "seed", "42", "replicas", "128",
+        "ensemble", "qct", "wigner", "temperature", "0", "seed", "42", "replicas", "128",
         "hessian_displacement", "0.001", "anharmonic_reweighting", "no"
     ]
     assert strings == expected
