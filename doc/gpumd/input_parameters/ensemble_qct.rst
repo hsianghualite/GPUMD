@@ -29,6 +29,14 @@ The explicit sampling-mode names are also accepted::
     ensemble qct mode_energy mode 7 energy 0.35 seed 12345
     ensemble qct semiclassical v 2 J 5 seed 12345
 
+Run an LSC-IVR calculation with Wigner sampling and anharmonic reweighting::
+
+    ensemble qct wigner temperature 300 seed 12345 replicas 64 hessian_displacement 0.001 anharmonic_reweighting yes
+
+Ground-state Wigner (T = 0) without reweighting::
+
+    ensemble qct wigner temperature 0 seed 42 replicas 128 anharmonic_reweighting no
+
 For a first-order transition-state structure, the same interface can launch a
 trajectory from the dividing surface::
 
@@ -76,6 +84,40 @@ Parameters
   sampled bond with a deterministic orientation. Real-potential energy
   correction scales only the vibrational velocity, so the requested angular
   momentum is preserved.
+
+``wigner``
+  Linearized Semiclassical Initial Value Representation (LSC-IVR) sampling.
+  Each active normal mode ``(Q_k, P_k)`` is drawn from the harmonic Wigner
+  thermal distribution with quantum-corrected variances::
+
+      sigma_Q^2 = (hbar / 2 omega_k) * coth(beta * hbar * omega_k / 2)
+      sigma_P^2 = (hbar * omega_k / 2) * coth(beta * hbar * omega_k / 2)
+
+  At high temperature this reduces to the classical Boltzmann result; at
+  ``T = 0`` it gives the ground-state Wigner distribution.  ``temperature``
+  is required (use ``0`` for ground state).  Anharmonic reweighting weights
+  ``w_i = exp(-beta * Delta_V)`` are computed when
+  ``anharmonic_reweighting yes`` is set (the default).  The ``zpe`` keyword
+  must be ``yes`` (the default) because zero-point energy is intrinsic to the
+  Wigner distribution; ``zpe no`` is rejected.  ``stationary_point saddle``
+  is also rejected; use ``minimum`` or ``auto``.  If the auto Hessian detects
+  a strongly imaginary mode (frequency below ``-min_frequency``), Wigner
+  sampling is aborted because the structure is not a minimum.
+
+  See :ref:`lsc_ivr` for the full LSC-IVR user guide.
+
+``anharmonic_reweighting``
+  ``yes`` (default) or ``no``.  Only relevant for ``wigner`` sampling.  When
+  enabled, each replica receives a weight::
+
+      w_i = exp(-beta * [V_real(Q_i) - V_ref - sum_k 0.5 * omega_k^2 * Q_k^2])
+
+  where ``V_real`` is the true potential at the sampled geometry and the sum
+  is the harmonic potential relative to the reference minimum.  Both
+  ``wigner_weight`` and ``log_wigner_weight`` are written to
+  ``qct_initial_summary.csv``.  Set to ``no`` to disable reweighting (all
+  weights are 1.0), which is appropriate for ground-state (``T = 0``)
+  calculations where ``beta -> infinity`` makes the weight ill-defined.
 
 ``modes``
   Path to the QCT normal-mode input file. The current implementation expects
@@ -207,3 +249,65 @@ metadata, plus per-replica energies in ``qct_thermo.csv``. Other measurement
 keywords are currently rejected for batch runs because their reductions do
 not yet have per-replica semantics. The QCT analysis and multi-replica
 aggregation tools are documented in ``tools/qct/README.md``.
+
+.. _lsc_ivr:
+
+LSC-IVR post-processing
+-----------------------
+
+When ``wigner`` sampling is used, the trajectory and summary files are
+post-processed by ``tools/qct/lsc_ivr.py`` to compute quantum-corrected
+time-correlation functions::
+
+    python3 tools/qct/lsc_ivr.py \
+      --trajectory qct_trajectory.xyz \
+      --summary qct_initial_summary.csv \
+      --config lsc_ivr.json \
+      --output qct_lsc_correlation.csv \
+      --fft qct_lsc_spectrum.csv \
+      --time-step 0.1 \
+      --dump-interval 10
+
+The LSC-IVR correlation function is::
+
+    C_AB(t) = sum_i w_i * A(0)_i * B(t)_i  /  sum_i w_i
+
+where ``w_i`` is the Wigner anharmonic reweighting weight from
+``qct_initial_summary.csv``.  The tool prefers the ``log_wigner_weight``
+column for numerical stability, falling back to ``wigner_weight`` or
+defaulting to 1.0 if neither is present.
+
+The JSON configuration file defines the operators ``A`` and ``B``::
+
+    {
+      "operator_A": {"name": "position", "params": {"atom": 0, "axis": 0}},
+      "operator_B": {"name": "position", "params": {"atom": 0, "axis": 0}}
+    }
+
+Available operators:
+
+==================== ============================== ============================================
+Name                 Parameters                     Description
+==================== ============================== ============================================
+``position``         ``atom``, ``axis``             Cartesian position component
+``velocity``         ``atom``, ``axis``             Cartesian velocity component
+``com_position``    ``atom_indices`` (optional)    Center-of-mass position magnitude
+``com_velocity``    ``atom_indices`` (optional)    Center-of-mass speed
+``bond_length``      ``atom1``, ``atom2``           Distance between two atoms
+``kinetic_energy``   ``atom_indices`` (optional)    Total kinetic energy (eV)
+``point_charge_dipole`` ``axis``, ``charges``       Dipole moment component from point charges
+==================== ============================== ============================================
+
+The ``--fft`` option produces a spectral density CSV with columns
+``frequency_THz``, ``wavenumber_cm_inv``, and ``intensity``.
+
+The standard error of the correlation uses the importance-sampling
+(ratio estimator) variance::
+
+    Var[C_hat(t)] = (1/N) * sum_i [w_i^2 * (f_i - C_hat)^2] / (sum_i w_i)^2
+
+where ``f_i = A(0)_i * B(t)_i`` and ``C_hat`` is the estimated mean.
+
+A complete user guide with worked examples (OH radical, ethanol,
+ground-state Wigner), troubleshooting, and physical constants is provided
+in ``docs/lsc_ivr.md``.
