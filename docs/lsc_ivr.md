@@ -50,7 +50,7 @@ H 15.46217931 15.00000000 15.00000000 1.00800000
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     qct wigner temperature 300 seed 12345 replicas 64 \
+ensemble     lsc_ivr 300 seed 12345 replicas 64 \
              hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     10
 run          100000
@@ -86,7 +86,20 @@ Configuration file (`lsc_ivr_config.json`):
 
 ## Input Parameters
 
-### `ensemble qct wigner` Syntax
+### `ensemble lsc_ivr` Syntax (Recommended)
+
+```
+ensemble lsc_ivr T [key-value pairs...]
+```
+
+The `lsc_ivr` ensemble is the recommended entry point for LSC-IVR calculations.
+It internally transforms to `qct wigner` but provides a cleaner interface and
+supports periodic boundary conditions for condensed-phase systems.
+
+For backward compatibility, `ensemble qct wigner temperature T ...` is still
+accepted and is fully equivalent.
+
+### `ensemble qct wigner` Syntax (Legacy)
 
 ```
 ensemble qct wigner temperature T [key-value pairs...]
@@ -294,7 +307,7 @@ window function applied.
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     qct wigner temperature 300 seed 12345 replicas 32 \
+ensemble     lsc_ivr 300 seed 12345 replicas 32 \
              hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     1
 run          5000
@@ -317,7 +330,7 @@ the OH stretch vibration.
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     qct wigner temperature 300 seed 12345 replicas 64 \
+ensemble     lsc_ivr 300 seed 12345 replicas 64 \
              hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     1
 run          10000
@@ -340,7 +353,7 @@ first with an external tool (e.g., ASE) to avoid saddle-point classification.
 ### Example 3: Ground-State Wigner (T=0)
 
 ```
-ensemble     qct wigner temperature 0 seed 42 replicas 128 \
+ensemble     lsc_ivr 0 seed 42 replicas 128 \
              anharmonic_reweighting no
 ```
 

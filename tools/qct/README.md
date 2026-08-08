@@ -179,7 +179,7 @@ channel counts, and branching fractions over valid (`completed`) trajectories.
 LSC-IVR is a semiclassical dynamics method that captures quantum
 effects—zero-point energy, tunneling, and thermal quantum
 fluctuations—within a classical trajectory framework.  GPUMD implements
-it as a `wigner` sampling mode of the QCT engine: initial conditions are
+it as a dedicated `lsc_ivr` ensemble (internally using the QCT engine's `wigner` mode): initial conditions are
 drawn from the harmonic Wigner thermal distribution, propagated with
 ordinary NVE dynamics, and quantum-corrected time-correlation functions
 are computed through anharmonic reweighting.
@@ -189,7 +189,7 @@ are computed through anharmonic reweighting.
 ```
 potential    nep.txt
 time_step    0.1
-ensemble     qct wigner temperature 300 seed 12345 replicas 64 \
+ensemble     lsc_ivr 300 seed 12345 replicas 64 \
              hessian_displacement 0.001 anharmonic_reweighting yes
 dump_qct     10
 run          100000

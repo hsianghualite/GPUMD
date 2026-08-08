@@ -24,6 +24,7 @@ Below you can find a listing of keywords for the ``run.in`` input file.
    ensemble_standard
    ensemble_mttk
    ensemble_qct
+   ensemble_lsc_ivr
    ensemble_qtb
    ensemble_heat
    ensemble_ttm

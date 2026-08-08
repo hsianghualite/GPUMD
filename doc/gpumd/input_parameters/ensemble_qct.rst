@@ -311,3 +311,11 @@ where ``f_i = A(0)_i * B(t)_i`` and ``C_hat`` is the estimated mean.
 A complete user guide with worked examples (OH radical, ethanol,
 ground-state Wigner), troubleshooting, and physical constants is provided
 in ``docs/lsc_ivr.md``.
+
+.. note::
+
+   For condensed-phase systems with periodic boundary conditions, use the
+   dedicated :ref:`lsc_ivr <kw_ensemble_lsc_ivr>` ensemble instead of
+   ``ensemble qct wigner``.  The ``lsc_ivr`` ensemble internally transforms
+   to ``qct wigner`` but is designed for periodic systems and clearly
+   separates LSC-IVR from QCT in logs and output.

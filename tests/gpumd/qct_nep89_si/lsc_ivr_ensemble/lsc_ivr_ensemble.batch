@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH --job-name=lsc_ivr_ens
+#SBATCH --partition=16V100
+#SBATCH --gpus-per-node=1
+#SBATCH --qos=flood-1o2gpu
+#SBATCH --time=02:00:00
+#SBATCH --output=lsc_ivr_ensemble_%j.out
+
+set -euo pipefail
+
+module load cuda/12.4.1
+
+cd "$(dirname "$0")"
+
+echo "=== LSC-IVR ensemble test with PBC ==="
+echo "Date: $(date)"
+echo "Directory: $(pwd)"
+
+# Use the GPUMD binary from the build
+GPUMD=${GPUMD:-../../../../src/gpumd}
+echo "Using GPUMD: $GPUMD"
+
+# Run the LSC-IVR ensemble with periodic boundary conditions
+$GPUMD < run.in
+
+echo "=== Done ==="
+date

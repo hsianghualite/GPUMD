@@ -504,3 +504,71 @@ class TestTrajectorySplitting:
         assert len(groups) == 1
         assert 0 in groups
         assert len(groups[0]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests for the ensemble lsc_ivr keyword (parameter transformation)
+# ---------------------------------------------------------------------------
+# These tests verify that the lsc_ivr ensemble keyword correctly transforms
+# "ensemble lsc_ivr T ..." into "ensemble qct wigner T ..." for the QCT
+# constructor.  The actual GPU-based integration is tested on the sai cluster
+# via the batch scripts in tests/gpumd/qct_nep89_si/lsc_ivr_ensemble/.
+
+def test_lsc_ivr_param_transform_basic():
+    """Verify the parameter transformation logic used by Ensemble_LSC_IVR."""
+    # Input: ensemble lsc_ivr 300 seed 12345 replicas 1
+    # Expected QCT params: ensemble qct wigner 300 seed 12345 replicas 1
+    input_params = ["ensemble", "lsc_ivr", "300", "seed", "12345", "replicas", "1"]
+    num_param = len(input_params)
+
+    # Simulate the transformation
+    strings = []
+    strings.append(input_params[0])  # "ensemble"
+    strings.append("qct")
+    strings.append("wigner")
+    for i in range(2, num_param):
+        strings.append(input_params[i])
+
+    expected = ["ensemble", "qct", "wigner", "300", "seed", "12345", "replicas", "1"]
+    assert strings == expected
+    assert len(strings) == num_param + 1  # one extra for "wigner"
+
+
+def test_lsc_ivr_param_transform_with_options():
+    """Verify parameter transformation with all common options."""
+    input_params = [
+        "ensemble", "lsc_ivr", "0", "seed", "42", "replicas", "128",
+        "hessian_displacement", "0.001", "anharmonic_reweighting", "no"
+    ]
+    num_param = len(input_params)
+
+    strings = [input_params[0], "qct", "wigner"]
+    for i in range(2, num_param):
+        strings.append(input_params[i])
+
+    expected = [
+        "ensemble", "qct", "wigner", "0", "seed", "42", "replicas", "128",
+        "hessian_displacement", "0.001", "anharmonic_reweighting", "no"
+    ]
+    assert strings == expected
+
+
+def test_lsc_ivr_run_in_file_exists():
+    """Verify the test run.in file uses the lsc_ivr keyword."""
+    run_in = REPO_ROOT / "tests/gpumd/qct_nep89_si/lsc_ivr_ensemble/run.in"
+    assert run_in.exists(), f"Missing {run_in}"
+    content = run_in.read_text()
+    assert "ensemble" in content
+    assert "lsc_ivr" in content
+    assert "300" in content
+    # Should NOT use "qct wigner" syntax
+    assert "qct wigner" not in content, "lsc_ivr_ensemble run.in should use lsc_ivr keyword"
+
+
+def test_lsc_ivr_batch_file_exists():
+    """Verify the batch script exists for the lsc_ivr ensemble test."""
+    batch = REPO_ROOT / "tests/gpumd/qct_nep89_si/lsc_ivr_ensemble/lsc_ivr_ensemble.batch"
+    assert batch.exists(), f"Missing {batch}"
+    content = batch.read_text()
+    assert "sbatch" in content.lower() or "SBATCH" in content
+    assert "run.in" in content

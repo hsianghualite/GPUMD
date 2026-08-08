@@ -30,6 +30,7 @@ The driver class for the various integrators.
 #include "ensemble_nve.cuh"
 #include "ensemble_pimd.cuh"
 #include "ensemble_qct.cuh"
+#include "ensemble_lsc_ivr.cuh"
 #include "ensemble_qtb.cuh"
 #include "ensemble_ti.cuh"
 #include "ensemble_ti_as.cuh"
@@ -461,6 +462,12 @@ void Integrate::parse_ensemble(
     // QCT ensemble sets the sample temperature; use it as the target
     // temperature so that measurement keywords (e.g. compute_hac) receive
     // the correct T for the Green-Kubo prefactor.
+    temperature1 = ptr_temp->get_sample_temperature();
+    temperature2 = ptr_temp->get_sample_temperature();
+  } else if (strcmp(param[1], "lsc_ivr") == 0) {
+    type = -14;
+    Ensemble_LSC_IVR* ptr_temp = new Ensemble_LSC_IVR(param, num_param);
+    ensemble.reset(ptr_temp);
     temperature1 = ptr_temp->get_sample_temperature();
     temperature2 = ptr_temp->get_sample_temperature();
   } else if (strcmp(param[1], "heat_nhc") == 0) {

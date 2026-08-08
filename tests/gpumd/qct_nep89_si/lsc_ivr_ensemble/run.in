@@ -1,0 +1,9 @@
+# LSC-IVR ensemble for periodic Si crystal (216 atoms, 3x3x3 supercell)
+# Uses the dedicated lsc_ivr ensemble keyword
+potential    ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step    0.5
+ensemble     lsc_ivr 300 seed 12345 replicas 1 \
+             hessian_displacement 0.001 anharmonic_reweighting no
+compute_hac  20 500 10
+dump_thermo  100
+run          200000
