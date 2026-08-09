@@ -1,0 +1,22 @@
+# LSC-IVR multi-GPU template for thermal conductivity
+# This run.in is a TEMPLATE for run_multigpu.py
+# Each GPU process gets replicas=1 with a unique seed (rewritten by the tool)
+#
+# System: Si diamond 3x3x3 (216 atoms), NEP89
+# Method: LSC-IVR with Wigner quantum-corrected initial conditions
+# Measurement: Green-Kubo HAC for thermal conductivity
+#
+# Usage:
+#   python tools/qct/run_multigpu.py \
+#     --template tests/gpumd/qct_nep89_si/lsc_ivr_multigpu \
+#     --gpumd ~/gpumd/src/gpumd \
+#     --total-replicas 4 \
+#     --num-gpus 4 \
+#     --base-seed 12345 \
+#     --output merged_output/
+potential    ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step    0.5
+ensemble     lsc_ivr 300 seed 12345 replicas 1 hessian_displacement 0.001 anharmonic_reweighting no
+compute_hac  20 500 10
+dump_thermo  100
+run          2000000

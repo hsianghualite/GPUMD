@@ -1,0 +1,140 @@
+#!/bin/bash
+#SBATCH --job-name=lsc-mgpu
+#SBATCH --partition=16V100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gpus-per-node=4
+#SBATCH --qos=flood-1o2gpu
+#SBATCH --time=04:00:00
+
+# =============================================================================
+# LSC-IVR Multi-GPU Thermal Conductivity Test (方案A)
+#
+# This test demonstrates process-level parallelism for LSC-IVR:
+#   - 4 independent LSC-IVR trajectories, one per GPU
+#   - Each uses replicas=1 (standard MD path, cell-list neighbor search)
+#   - run_multigpu.py merges HAC with Wigner weighting
+#
+# System: Si diamond 3x3x3 (216 atoms), NEP89
+# =============================================================================
+
+source /etc/profile.d/lmod.sh
+module load cuda/12.4.1
+export OMP_NUM_THREADS=1
+source /opt/sai_config/mps_mapping.d/${SLURM_JOB_PARTITION}.bash
+
+REVIEW_ROOT="$HOME/workdir_sinano-fanzhaochuan/yishangzhao/gpumd-qct-review"
+GPUMD_BIN="${REVIEW_ROOT}/src/gpumd"
+TEST_BASE="${REVIEW_ROOT}/tests/gpumd/qct_nep89_si/lsc_ivr_multigpu"
+
+echo "============================================"
+echo "LSC-IVR Multi-GPU Thermal Conductivity Test (方案A)"
+echo "Date: $(date)"
+echo "Node: $(hostname)"
+echo "GPUs: $(nvidia-smi -L 2>&1 | head -4)"
+echo "============================================"
+
+cd "${TEST_BASE}" || { echo "FAIL: cannot cd to ${TEST_BASE}"; exit 1; }
+
+# Clean previous results
+rm -rf gpu_* merged_output
+
+echo ""
+echo "--- run.in (template) ---"
+cat run.in
+
+echo ""
+echo "--- Launching multi-GPU LSC-IVR ---"
+# Launch 4 replicas across 4 GPUs
+# Each GPU runs one independent LSC-IVR trajectory with replicas=1
+python3 "${REVIEW_ROOT}/tools/qct/run_multigpu.py" \
+    --template "${TEST_BASE}" \
+    --gpumd "${GPUMD_BIN}" \
+    --total-replicas 4 \
+    --num-gpus 4 \
+    --base-seed 12345 \
+    --output merged_output/ 2>&1
+
+RC=$?
+if [ ${RC} -ne 0 ]; then
+    echo "FAIL: run_multigpu.py exited with code ${RC}"
+    echo "=== Checking GPU logs ==="
+    for d in gpu_0 gpu_1 gpu_2 gpu_3; do
+        if [ -f "${d}/gpumd.log" ]; then
+            echo "--- ${d}/gpumd.log (last 20 lines) ---"
+            tail -20 "${d}/gpumd.log"
+        fi
+    done
+    exit 1
+fi
+
+echo ""
+echo "============================================"
+echo "Results Analysis"
+echo "============================================"
+
+# Check merged HAC
+if [ -f "merged_output/hac.out" ]; then
+    echo "--- Merged HAC (Wigner-weighted) ---"
+    echo "First 5 lines:"
+    head -5 merged_output/hac.out
+    echo "..."
+    echo "Last 5 lines:"
+    tail -5 merged_output/hac.out
+
+    echo ""
+    echo "--- Thermal Conductivity ---"
+    python3 -c "
+import numpy as np
+data = np.loadtxt('merged_output/hac.out')
+t = data[:, 0]
+kx = data[:, 6] + data[:, 7]
+ky = data[:, 8] + data[:, 9]
+kz = data[:, 10]
+kavg = (kx + ky + kz) / 3
+print(f'HAC data: {data.shape[0]} rows, {data.shape[1]} columns')
+print(f'Time range: {t[0]:.2f} - {t[-1]:.2f} ps')
+print(f'')
+print(f'Final thermal conductivity:')
+print(f'  kappa_x = {kx[-1]:.4f} W/m/K')
+print(f'  kappa_y = {ky[-1]:.4f} W/m/K')
+print(f'  kappa_z = {kz[-1]:.4f} W/m/K')
+print(f'  kappa_avg = {kavg[-1]:.4f} W/m/K')
+print(f'')
+# Also check convergence at 50%, 75%, 100%
+for frac in [0.5, 0.75, 1.0]:
+    idx = int(data.shape[0] * frac) - 1
+    print(f'  kappa_avg at {frac*100:.0f}% = {kavg[idx]:.4f} W/m/K')
+"
+else
+    echo "ERROR: merged_output/hac.out not found"
+fi
+
+# Check Wigner weights
+if [ -f "merged_output/qct_initial_summary.csv" ]; then
+    echo ""
+    echo "--- Wigner Summary ---"
+    cat merged_output/qct_initial_summary.csv
+fi
+
+# Check per-GPU HAC for comparison
+echo ""
+echo "--- Per-GPU HAC comparison ---"
+for d in gpu_0 gpu_1 gpu_2 gpu_3; do
+    if [ -f "${d}/hac.out" ]; then
+        kavg=$(python3 -c "
+import numpy as np
+d = np.loadtxt('${d}/hac.out')
+kx = d[-1, 6] + d[-1, 7]
+ky = d[-1, 8] + d[-1, 9]
+kz = d[-1, 10]
+print(f'{(kx+ky+kz)/3:.4f}')
+" 2>/dev/null)
+        echo "  ${d}: kappa_avg = ${kavg} W/m/K"
+    fi
+done
+
+echo ""
+echo "============================================"
+echo "Test PASSED"
+echo "============================================"

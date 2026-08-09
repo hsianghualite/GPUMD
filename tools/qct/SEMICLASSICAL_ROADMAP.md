@@ -270,3 +270,60 @@ for reuse rather than reimplemented per method:
    infrastructure that does not yet exist.
 4. **Method 4 (PLDM)** — gated on a separate multi-surface capability
    decision; not part of this roadmap otherwise.
+
+## Large-system strategy: 方案A (process-level parallelism)
+
+### Problem
+
+The QCT batch neighbor list (`find_neighbor_list_qct_batch` in
+`src/force/nep.cu`) is O(N²) brute force: for each atom it loops over
+all atoms in the same replica. This is fine for small molecules but
+prohibitive for condensed-phase systems (> 1000 atoms). Additionally,
+the batch path bypasses GPUMD's cell-list neighbor search
+(`neighbor.find_neighbor_global`) and the expanded-box machinery.
+
+### Solution: process-level parallelism with `replicas=1`
+
+For large systems, each GPU runs a separate GPUMD process with
+`replicas=1`. This forces the standard MD code path
+(`compute_large_box` or `compute_small_box`), which uses cell-list
+neighbor search with O(N) scaling. Multiple independent trajectories
+are obtained by running multiple processes with different seeds.
+
+The `run_multigpu.py` tool orchestrates this:
+
+1. Divides `total-replicas` across available GPUs.
+2. Each GPU gets `replicas=1` (or a small number) with a unique seed.
+3. Each process runs an independent LSC-IVR NVE trajectory.
+4. Results are merged: trajectories, thermo, ZPE, and **HAC**.
+
+### Wigner-weighted HAC merge
+
+For LSC-IVR thermal conductivity (Green-Kubo), the ensemble-averaged
+heat current autocorrelation integral must be weighted by each
+replica's Wigner factor:
+
+$$\kappa(t) = \frac{\sum_i w_i \, \kappa_i(t)}{\sum_i w_i}$$
+
+The `merge_hac()` function in `run_multigpu.py` implements this. When
+`anharmonic_reweighting no` is set (all $w_i = 1$), it reduces to a
+simple average, which is the classical limit.
+
+### Comparison with batch mode
+
+| Feature | 方案A (process-level) | Batch mode (replicas>1) |
+|---|---|---|
+| Neighbor list | Cell-list, O(N) | Brute-force, O(N²) |
+| PBC support | Full (standard MD path) | Limited (no expanded box) |
+| Max system size | Unlimited (cell-list) | ~100 atoms (MN limit) |
+| Multi-GPU | Yes (one process per GPU) | No (single GPU only) |
+| HAC merge | Wigner-weighted (automatic) | N/A (single HAC) |
+| Best for | Condensed phase, large systems | Small molecules, gas phase |
+
+### What this does NOT require
+
+- No spatial decomposition in C++ (no multi-GPU NEP).
+- No MPI (process-level parallelism only).
+- No changes to the force evaluator or neighbor list.
+- The only C++ requirement is that `replicas=1` + PBC works correctly,
+  which it does: the standard MD path handles PBC natively.
