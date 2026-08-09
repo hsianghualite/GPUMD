@@ -22,8 +22,7 @@ Grouping methods are numbered from 0. When :attr:`grouping_method` is non-negati
 :attr:`group_id` selects a group label within that grouping method, and only the atoms
 belonging to that group are written. Both values must identify an existing, non-empty
 group. When :attr:`grouping_method` is negative, :attr:`group_id` is ignored and all atoms
-in the system are written. These selection rules are the same as for
-:ref:`dump_xyz <kw_dump_xyz>`.
+in the system are written.
 The :attr:`interval` parameter is the output interval (number of steps) of the atom positions. :attr:`has_velocity` can be 1 or 0, which means the velocities will or will not be included in the output. :attr:`filename` is the relative or absolute path of the output file.
 The optional arguments (:attr:`optional_args`) provide additional functionality.
 Currently, the following optional arguments are accepted:
@@ -97,6 +96,18 @@ To dump group 0 from grouping method 1 with lossless deflate compression, one ca
 
 before the :ref:`run command <kw_run>`.
 
+Multiple groups in one run
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Multiple :attr:`dump_netcdf` commands can write different groups during the
+same MD run. Each command must use a distinct filename and can use its own
+output interval, so every output file contains one independently sampled group::
+
+  dump_netcdf 0 0 10 1 group_0.nc compression deflate 1
+  dump_netcdf 0 1 25 1 group_1.nc compression deflate 1
+
+  run 100000
+
 
 Caveats
 -------
@@ -104,6 +115,9 @@ Caveats
 * Length is in units of Ångström and velocity is in units of Ångström/picosecond.
 * This keyword is not propagating.
   That means, its effect will not be passed from one run to the next.
+* This keyword can be invoked multiple times within one run to write different
+  groups to different files. Each invocation must use a distinct filename and
+  can use its own output interval and options.
 * An existing output file is overwritten the first time its name is used in a GPUMD execution.
 * Repeating the keyword with the same filename in later runs of the same GPUMD execution
   appends to that file. A different filename creates a separate trajectory file.
