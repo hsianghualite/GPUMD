@@ -217,8 +217,11 @@ void Run::execute_run_in()
 
 void Run::perform_a_run()
 {
-  integrate.initialize(time_step, atom, box, group, thermo, force, number_of_steps);
   validate_qct_batch_configuration();
+  const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+  const bool qct_batch = qct != nullptr && qct->is_batch();
+
+  integrate.initialize(time_step, atom, box, group, thermo, force, number_of_steps);
   mc.initialize();
   measure.initialize(number_of_steps, time_step, integrate, group, atom, box, force);
 
@@ -248,6 +251,17 @@ void Run::perform_a_run()
       atom.velocity_per_atom,
       atom.mass);
   }
+
+  measure.process_initial(
+    number_of_steps,
+    integrate.fixed_group,
+    integrate.move_group,
+    integrate,
+    box,
+    group,
+    thermo,
+    atom,
+    force);
 
   double initial_time_step = time_step;
 
@@ -316,7 +330,18 @@ void Run::perform_a_run()
 
     int base = (10 <= number_of_steps) ? (number_of_steps / 10) : 1;
     if (0 == (step + 1) % base) {
-      printf("    %d steps completed.\n", step + 1);
+      const auto time_now = std::chrono::high_resolution_clock::now();
+      const std::chrono::duration<double> elapsed = time_now - time_begin;
+      int steps_done = step + 1;
+      int steps_left = number_of_steps - steps_done;
+      double eta_seconds = (steps_left > 0) ? elapsed.count() / steps_done * steps_left : 0.0;
+      printf(
+        "    %d steps completed (%.1f%%). Elapsed: %.1f s. ETA: %.1f s (%.1f min).\n",
+        steps_done,
+        100.0 * steps_done / number_of_steps,
+        elapsed.count(),
+        eta_seconds,
+        eta_seconds / 60.0);
       fflush(stdout);
     }
   }
@@ -343,17 +368,32 @@ void Run::perform_a_run()
   velocity.finalize();
   force.finalize();
   max_distance_per_step = 0.0;
+  simulation_run_completed = true;
+  if (qct_batch) {
+    qct_batch_run_completed = true;
+  }
 }
 
 void Run::validate_qct_batch_configuration() const
 {
-  if (integrate.type != -13) {
-    return;
+  if (qct_batch_run_completed) {
+    PRINT_INPUT_ERROR(
+      "A native QCT/LSC-IVR batch run already completed; no subsequent run is allowed in the same process.");
   }
 
   const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
   if (qct == nullptr || !qct->is_batch()) {
     return;
+  }
+
+  if (simulation_run_completed) {
+    PRINT_INPUT_ERROR(
+      "Native QCT/LSC-IVR batch must be the first run in a process; use a separate process after other runs.");
+  }
+
+  if (box.pbc_x || box.pbc_y || box.pbc_z) {
+    PRINT_INPUT_ERROR(
+      "QCT/LSC-IVR native periodic batch is disabled until replica-isolated periodic images are implemented.");
   }
 
   if (velocity.do_velocity_correction) {
@@ -383,10 +423,9 @@ void Run::validate_qct_batch_configuration() const
   }
 
   for (const auto& property : measure.properties) {
-    if (property->property_name != "dump_qct" &&
-        property->property_name != "dump_dipole") {
+    if (property->property_name != "dump_qct" && property->property_name != "compute_hac") {
       PRINT_INPUT_ERROR(
-        "QCT batch only supports dump_qct and dump_dipole output until measurements have per-replica reductions.");
+        "QCT/LSC-IVR native batch only supports dump_qct and compute_hac measurements.");
     }
   }
 }

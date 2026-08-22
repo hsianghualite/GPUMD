@@ -32,6 +32,7 @@
 #define gpuMemcpyHostToHost hipMemcpyHostToHost
 #define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
 #define gpuMemset hipMemset
+#define gpuMemGetInfo hipMemGetInfo
 
 // error handling
 #define gpuError_t hipError_t
@@ -63,6 +64,7 @@
 #define gpublasHandle_t hipblasHandle_t
 #define gpublasSgemv hipblasSgemv
 #define gpublasSgemm hipblasSgemm
+#define gpublasDgemm hipblasDgemm
 #define gpublasSdgmm hipblasSdgmm
 #define gpublasDgemvBatched hipblasDgemvBatched
 #define gpublasDestroy hipblasDestroy
@@ -90,6 +92,8 @@
 #define gpusolverDnZheevd hipsolverDnZheevd
 #define gpusolverDnDsyevj_bufferSize hipsolverDnDsyevj_bufferSize
 #define gpusolverDnDsyevj hipsolverDnDsyevj
+#define gpusolverDnDsyevd_bufferSize hipsolverDnDsyevd_bufferSize
+#define gpusolverDnDsyevd hipsolverDnDsyevd
 #define gpusolverDnZheevjBatched_bufferSize hipsolverDnZheevjBatched_bufferSize
 #define gpusolverDnZheevjBatched hipsolverDnZheevjBatched
 
@@ -120,6 +124,7 @@
 #define gpuMemcpyHostToHost cudaMemcpyHostToHost
 #define gpuMemcpyDeviceToDevice cudaMemcpyDeviceToDevice
 #define gpuMemset cudaMemset
+#define gpuMemGetInfo cudaMemGetInfo
 
 // error handling
 #define gpuError_t cudaError_t
@@ -151,6 +156,7 @@
 #define gpublasHandle_t cublasHandle_t
 #define gpublasSgemv cublasSgemv
 #define gpublasSgemm cublasSgemm
+#define gpublasDgemm cublasDgemm
 #define gpublasSdgmm cublasSdgmm
 #define gpublasDgemv cublasDgemv
 #if (CUDA_VERSION >= 12000)
@@ -181,6 +187,8 @@
 #define gpusolverDnZheevd cusolverDnZheevd
 #define gpusolverDnDsyevj_bufferSize cusolverDnDsyevj_bufferSize
 #define gpusolverDnDsyevj cusolverDnDsyevj
+#define gpusolverDnDsyevd_bufferSize cusolverDnDsyevd_bufferSize
+#define gpusolverDnDsyevd cusolverDnDsyevd
 #define gpusolverDnZheevjBatched_bufferSize cusolverDnZheevjBatched_bufferSize
 #define gpusolverDnZheevjBatched cusolverDnZheevjBatched
 

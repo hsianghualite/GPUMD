@@ -19,10 +19,16 @@ Calculate the heat current autocorrelation (HAC) function.
 
 #include "compute_heat.cuh"
 #include "hac.cuh"
+#include "integrate/ensemble_qct.cuh"
+#include "integrate/integrate.cuh"
 #include "utilities/common.cuh"
 #include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
+#include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <fstream>
+#include <limits>
 #include <vector>
 
 #define NUM_OF_HEAT_COMPONENTS 5
@@ -40,27 +46,103 @@ void HAC::preprocess(
   Force& force)
 {
   if (compute) {
-    int number_of_frames = number_of_steps / sample_interval;
-    heat_all.resize(NUM_OF_HEAT_COMPONENTS * number_of_frames);
+    const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+    if (qct != nullptr && qct->is_batch()) {
+      batch_mode_ = true;
+      number_of_replicas_ = qct->number_of_replicas();
+      atoms_per_replica_ = qct->atoms_per_replica();
+    } else {
+      batch_mode_ = false;
+      number_of_replicas_ = 1;
+      atoms_per_replica_ = atom.number_of_atoms;
+    }
+    if (number_of_replicas_ <= 0 || atoms_per_replica_ <= 0) {
+      PRINT_INPUT_ERROR("HAC received an invalid QCT replica layout.");
+    }
+
+    normalized_weights_.assign(number_of_replicas_, 1.0 / number_of_replicas_);
+    if (qct != nullptr) {
+      const std::vector<double> log_weights = qct->replica_log_wigner_weights();
+      if (static_cast<int>(log_weights.size()) != number_of_replicas_) {
+        PRINT_INPUT_ERROR("QCT Wigner weight count does not match HAC replicas.");
+      }
+      double maximum = -std::numeric_limits<double>::infinity();
+      for (const double log_weight : log_weights) {
+        if (std::isnan(log_weight) || log_weight == std::numeric_limits<double>::infinity()) {
+          PRINT_INPUT_ERROR("QCT Wigner weights contain NaN or positive infinity.");
+        }
+        if (std::isfinite(log_weight)) {
+          maximum = std::max(maximum, log_weight);
+        }
+      }
+      if (!std::isfinite(maximum)) {
+        PRINT_INPUT_ERROR("All QCT Wigner weights are zero.");
+      }
+      double total = 0.0;
+      for (int replica = 0; replica < number_of_replicas_; ++replica) {
+        normalized_weights_[replica] =
+          std::isfinite(log_weights[replica]) ? std::exp(log_weights[replica] - maximum) : 0.0;
+        total += normalized_weights_[replica];
+      }
+      if (!std::isfinite(total) || total <= 0.0) {
+        PRINT_INPUT_ERROR("QCT Wigner weights have an invalid normalized total.");
+      }
+      for (double& weight : normalized_weights_) {
+        weight /= total;
+      }
+      if (batch_mode_) {
+        std::ofstream weights_output("hac_reweighting.csv");
+        if (!weights_output.is_open()) {
+          PRINT_INPUT_ERROR("Cannot open hac_reweighting.csv for writing.");
+        }
+        weights_output << "replica,seed,log_wigner_weight,normalized_weight\n";
+        const auto& seeds = qct->replica_seeds();
+        for (int replica = 0; replica < number_of_replicas_; ++replica) {
+          const double log_weight = log_weights[replica];
+          weights_output << replica << ','
+                         << (replica < static_cast<int>(seeds.size()) ? seeds[replica] : 0ULL)
+                         << ',' << log_weight << ',' << normalized_weights_[replica] << '\n';
+        }
+      }
+    }
+
+    const size_t number_of_frames = static_cast<size_t>(number_of_steps / sample_interval);
+    const size_t number_of_values =
+      static_cast<size_t>(NUM_OF_HEAT_COMPONENTS) * number_of_replicas_ * number_of_frames;
+    if (number_of_frames == 0 ||
+        number_of_values > std::numeric_limits<size_t>::max() / sizeof(double)) {
+      PRINT_INPUT_ERROR("HAC data size is invalid or exceeds addressable memory.");
+    }
+    heat_all.resize(number_of_values);
     atom.heat_per_atom.resize(atom.number_of_atoms * 5);
   }
 }
 
 // sum up the per-atom heat current to get the total heat current
-static __global__ void
-gpu_sum_heat(const int N, const int Nd, const int nd, const double* g_heat, double* g_heat_all)
+static __global__ void gpu_sum_heat(
+  const int atoms_per_replica,
+  const int total_atoms,
+  const int Nd,
+  const int nd,
+  const int number_of_replicas,
+  const double* g_heat,
+  double* g_heat_all)
 {
-  // <<<NUM_OF_HEAT_COMPONENTS, 1024>>>
+  // <<<NUM_OF_HEAT_COMPONENTS * number_of_replicas, 1024>>>
   const int tid = threadIdx.x;
-  const int number_of_patches = (N - 1) / 1024 + 1;
+  const int block = blockIdx.x;
+  const int replica = block / NUM_OF_HEAT_COMPONENTS;
+  const int component = block % NUM_OF_HEAT_COMPONENTS;
+  const int number_of_patches = (atoms_per_replica - 1) / 1024 + 1;
 
   __shared__ double s_data[1024];
   s_data[tid] = 0.0;
 
   for (int patch = 0; patch < number_of_patches; ++patch) {
     const int n = tid + patch * 1024;
-    if (n < N) {
-      s_data[tid] += g_heat[n + N * blockIdx.x];
+    if (n < atoms_per_replica && replica < number_of_replicas) {
+      const int atom_index = replica * atoms_per_replica + n;
+      s_data[tid] += g_heat[atom_index + total_atoms * component];
     }
   }
 
@@ -73,7 +155,7 @@ gpu_sum_heat(const int N, const int Nd, const int nd, const double* g_heat, doub
     __syncthreads();
   }
   if (tid == 0) {
-    g_heat_all[nd + Nd * blockIdx.x] = s_data[0];
+    g_heat_all[nd + Nd * block] = s_data[0];
   }
 }
 
@@ -97,20 +179,30 @@ void HAC::process(
   if ((step + 1) % sample_interval != 0)
     return;
 
-  const int N = atom.number_of_atoms;
-
   compute_heat(atom.virial_per_atom, atom.velocity_per_atom, atom.heat_per_atom);
 
   int nd = (step + 1) / sample_interval - 1;
   int Nd = number_of_steps / sample_interval;
-  gpu_sum_heat<<<NUM_OF_HEAT_COMPONENTS, 1024>>>(N, Nd, nd, atom.heat_per_atom.data(), heat_all.data());
+  gpu_sum_heat<<<NUM_OF_HEAT_COMPONENTS * number_of_replicas_, 1024>>>(
+    atoms_per_replica_,
+    atom.number_of_atoms,
+    Nd,
+    nd,
+    number_of_replicas_,
+    atom.heat_per_atom.data(),
+    heat_all.data());
   GPU_CHECK_KERNEL
 }
 
 // Calculate the Heat current Auto-Correlation function (HAC)
-static __global__ void gpu_find_hac(const int Nc, const int Nd, const double* g_heat, double* g_hac)
+static __global__ void gpu_find_hac(
+  const int Nc,
+  const int Nd,
+  const int number_of_replicas,
+  const double* g_heat,
+  double* g_hac)
 {
-  //<<<Nc, 128>>>
+  //<<<dim3(Nc, number_of_replicas), 128>>>
 
   __shared__ double s_hac_xi[128];
   __shared__ double s_hac_xo[128];
@@ -120,8 +212,11 @@ static __global__ void gpu_find_hac(const int Nc, const int Nd, const double* g_
 
   int tid = threadIdx.x;
   int bid = blockIdx.x;
+  int replica = blockIdx.y;
   int number_of_patches = (Nd - 1) / 128 + 1;
   int number_of_data = Nd - bid;
+  const int heat_offset = replica * NUM_OF_HEAT_COMPONENTS * Nd;
+  const int hac_offset = replica * NUM_OF_HEAT_COMPONENTS * Nc;
 
   s_hac_xi[tid] = 0.0;
   s_hac_xo[tid] = 0.0;
@@ -132,15 +227,15 @@ static __global__ void gpu_find_hac(const int Nc, const int Nd, const double* g_
   for (int patch = 0; patch < number_of_patches; ++patch) {
     int index = tid + patch * 128;
     if (index + bid < Nd) {
-      s_hac_xi[tid] += g_heat[index + Nd * 0] * g_heat[index + bid + Nd * 0] +
-                       g_heat[index + Nd * 0] * g_heat[index + bid + Nd * 1];
-      s_hac_xo[tid] += g_heat[index + Nd * 1] * g_heat[index + bid + Nd * 1] +
-                       g_heat[index + Nd * 1] * g_heat[index + bid + Nd * 0];
-      s_hac_yi[tid] += g_heat[index + Nd * 2] * g_heat[index + bid + Nd * 2] +
-                       g_heat[index + Nd * 2] * g_heat[index + bid + Nd * 3];
-      s_hac_yo[tid] += g_heat[index + Nd * 3] * g_heat[index + bid + Nd * 3] +
-                       g_heat[index + Nd * 3] * g_heat[index + bid + Nd * 2];
-      s_hac_z[tid] += g_heat[index + Nd * 4] * g_heat[index + bid + Nd * 4];
+      s_hac_xi[tid] += g_heat[heat_offset + index + Nd * 0] * g_heat[heat_offset + index + bid + Nd * 0] +
+                       g_heat[heat_offset + index + Nd * 0] * g_heat[heat_offset + index + bid + Nd * 1];
+      s_hac_xo[tid] += g_heat[heat_offset + index + Nd * 1] * g_heat[heat_offset + index + bid + Nd * 1] +
+                       g_heat[heat_offset + index + Nd * 1] * g_heat[heat_offset + index + bid + Nd * 0];
+      s_hac_yi[tid] += g_heat[heat_offset + index + Nd * 2] * g_heat[heat_offset + index + bid + Nd * 2] +
+                       g_heat[heat_offset + index + Nd * 2] * g_heat[heat_offset + index + bid + Nd * 3];
+      s_hac_yo[tid] += g_heat[heat_offset + index + Nd * 3] * g_heat[heat_offset + index + bid + Nd * 3] +
+                       g_heat[heat_offset + index + Nd * 3] * g_heat[heat_offset + index + bid + Nd * 2];
+      s_hac_z[tid] += g_heat[heat_offset + index + Nd * 4] * g_heat[heat_offset + index + bid + Nd * 4];
     }
   }
   __syncthreads();
@@ -158,11 +253,11 @@ static __global__ void gpu_find_hac(const int Nc, const int Nd, const double* g_
   }
 
   if (tid == 0) {
-    g_hac[bid + Nc * 0] = s_hac_xi[0] / number_of_data;
-    g_hac[bid + Nc * 1] = s_hac_xo[0] / number_of_data;
-    g_hac[bid + Nc * 2] = s_hac_yi[0] / number_of_data;
-    g_hac[bid + Nc * 3] = s_hac_yo[0] / number_of_data;
-    g_hac[bid + Nc * 4] = s_hac_z[0] / number_of_data;
+    g_hac[hac_offset + bid + Nc * 0] = s_hac_xi[0] / number_of_data;
+    g_hac[hac_offset + bid + Nc * 1] = s_hac_xo[0] / number_of_data;
+    g_hac[hac_offset + bid + Nc * 2] = s_hac_yi[0] / number_of_data;
+    g_hac[hac_offset + bid + Nc * 3] = s_hac_yo[0] / number_of_data;
+    g_hac[hac_offset + bid + Nc * 4] = s_hac_z[0] / number_of_data;
   }
 }
 
@@ -189,6 +284,11 @@ void HAC::postprocess(
 {
   if (!compute)
     return;
+  if (temperature <= 0.0) {
+    PRINT_INPUT_ERROR(
+      "compute_hac requires a positive temperature; QCT/LSC-IVR T=0 is "
+      "incompatible with Green-Kubo thermal conductivity.");
+  }
   print_line_1();
   printf("Start to calculate HAC and related quantities.\n");
 
@@ -196,13 +296,19 @@ void HAC::postprocess(
   const double dt = time_step * sample_interval;
   const double dt_in_ps = dt * TIME_UNIT_CONVERSION / 1000.0; // ps
 
-  // major data
-  std::vector<double> rtc(Nc * NUM_OF_HEAT_COMPONENTS, 0.0);
-  GPU_Vector<double> hac_gpu(Nc * NUM_OF_HEAT_COMPONENTS);
-  std::vector<double> hac_cpu(Nc * NUM_OF_HEAT_COMPONENTS);
+  // Keep HAC and RTC per replica until the weighted reduction. This prevents
+  // cross-replica heat-current terms from entering a native QCT batch.
+  const size_t per_replica_size = static_cast<size_t>(Nc) * NUM_OF_HEAT_COMPONENTS;
+  const size_t total_size = per_replica_size * number_of_replicas_;
+  std::vector<double> rtc(total_size, 0.0);
+  GPU_Vector<double> hac_gpu(total_size);
+  std::vector<double> hac_cpu(total_size);
+  std::vector<double> hac_merged(per_replica_size, 0.0);
+  std::vector<double> rtc_merged(per_replica_size, 0.0);
 
   // Here, the block size is fixed to 128, which is a good choice
-  gpu_find_hac<<<Nc, 128>>>(Nc, Nd, heat_all.data(), hac_gpu.data());
+  dim3 hac_grid(Nc, number_of_replicas_);
+  gpu_find_hac<<<hac_grid, 128>>>(Nc, Nd, number_of_replicas_, heat_all.data(), hac_gpu.data());
   GPU_CHECK_KERNEL
 
   hac_gpu.copy_to_host(hac_cpu.data());
@@ -210,9 +316,40 @@ void HAC::postprocess(
   double factor = dt * 0.5 / (K_B * temperature * temperature * box.get_volume());
   factor *= KAPPA_UNIT_CONVERSION;
 
-  find_rtc(Nc, factor, hac_cpu.data(), rtc.data());
+  for (int replica = 0; replica < number_of_replicas_; ++replica) {
+    const size_t offset = static_cast<size_t>(replica) * per_replica_size;
+    find_rtc(Nc, factor, hac_cpu.data() + offset, rtc.data() + offset);
+    for (size_t index = 0; index < per_replica_size; ++index) {
+      hac_merged[index] += normalized_weights_[replica] * hac_cpu[offset + index];
+      rtc_merged[index] += normalized_weights_[replica] * rtc[offset + index];
+    }
+  }
+
+  double weight_square_sum = 0.0;
+  double max_weight = 0.0;
+  for (const double weight : normalized_weights_) {
+    weight_square_sum += weight * weight;
+    max_weight = std::max(max_weight, weight);
+  }
+  const double effective_replicas = weight_square_sum > 0.0 ? 1.0 / weight_square_sum : 0.0;
+  printf(
+    "HAC Wigner reduction: replicas=%d N_eff=%.6g max_normalized_weight=%.6g\n",
+    number_of_replicas_,
+    effective_replicas,
+    max_weight);
 
   FILE* fid = fopen("hac.out", "a");
+  if (fid == nullptr) {
+    PRINT_INPUT_ERROR("Cannot open hac.out for writing.");
+  }
+  FILE* replica_fid = nullptr;
+  if (batch_mode_) {
+    replica_fid = fopen("hac_replica.out", "a");
+    if (replica_fid == nullptr) {
+      fclose(fid);
+      PRINT_INPUT_ERROR("Cannot open hac_replica.out for writing.");
+    }
+  }
   const int number_of_output_data = Nc / output_interval;
   for (int nd = 0; nd < number_of_output_data; nd++) {
     const int nc = nd * output_interval;
@@ -221,13 +358,34 @@ void HAC::postprocess(
     for (int k = 0; k < NUM_OF_HEAT_COMPONENTS; k++) {
       for (int m = 0; m < output_interval; m++) {
         const int count = Nc * k + nc + m;
-        hac_ave[k] += hac_cpu[count];
-        rtc_ave[k] += rtc[count];
+        hac_ave[k] += hac_merged[count];
+        rtc_ave[k] += rtc_merged[count];
       }
     }
     for (int m = 0; m < NUM_OF_HEAT_COMPONENTS; m++) {
       hac_ave[m] /= output_interval;
       rtc_ave[m] /= output_interval;
+    }
+    if (replica_fid != nullptr) {
+      for (int replica = 0; replica < number_of_replicas_; ++replica) {
+        const size_t offset = static_cast<size_t>(replica) * per_replica_size;
+        fprintf(replica_fid, "%d %25.15e", replica, (nc + output_interval * 0.5) * dt_in_ps);
+        for (int k = 0; k < NUM_OF_HEAT_COMPONENTS; ++k) {
+          double value = 0.0;
+          for (int m = 0; m < output_interval; ++m) {
+            value += hac_cpu[offset + Nc * k + nc + m];
+          }
+          fprintf(replica_fid, "%25.15e", value / output_interval);
+        }
+        for (int k = 0; k < NUM_OF_HEAT_COMPONENTS; ++k) {
+          double value = 0.0;
+          for (int m = 0; m < output_interval; ++m) {
+            value += rtc[offset + Nc * k + nc + m];
+          }
+          fprintf(replica_fid, "%25.15e", value / output_interval);
+        }
+        fprintf(replica_fid, "\n");
+      }
     }
     fprintf(fid, "%25.15e", (nc + output_interval * 0.5) * dt_in_ps);
     for (int m = 0; m < NUM_OF_HEAT_COMPONENTS; m++) {
@@ -240,6 +398,10 @@ void HAC::postprocess(
   }
   fflush(fid);
   fclose(fid);
+  if (replica_fid != nullptr) {
+    fflush(replica_fid);
+    fclose(replica_fid);
+  }
 
   printf("HAC and related quantities are calculated.\n");
   print_line_2();

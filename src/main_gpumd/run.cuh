@@ -55,6 +55,9 @@ private:
   void parse_run(const char** param, int num_param);
   void validate_qct_batch_configuration() const;
 
+  bool qct_batch_run_completed = false;
+  bool simulation_run_completed = false;
+
   int number_of_types; // number of atom types
   int has_velocity_in_xyz = 0;
   int number_of_steps;        // number of steps in a specific run

@@ -17,12 +17,22 @@ for QCT initial-condition sampling.
 ------------------------------------------------------------------------------*/
 
 #pragma once
+#include <memory>
 #include <vector>
 
 class Atom;
 class Box;
 class Force;
 class Group;
+
+struct Molecular_Hessian_Device_Data;
+
+struct Molecular_Hessian_Options {
+  double displacement = 1.0e-3;
+  bool device_resident = true;
+  bool report_progress = true;
+  int progress_interval = 100;
+};
 
 struct Molecular_Hessian_Result {
   int number_of_atoms = 0;
@@ -32,11 +42,19 @@ struct Molecular_Hessian_Result {
   std::vector<double> hessian;
   std::vector<double> omega2_THz2;
   std::vector<double> eigenvectors;
+  std::shared_ptr<Molecular_Hessian_Device_Data> device_data;
 };
 
 class Molecular_Hessian
 {
 public:
+  static Molecular_Hessian_Result compute(
+    const Molecular_Hessian_Options& options,
+    Force& force,
+    Box& box,
+    Atom& atom,
+    std::vector<Group>& group);
+
   static Molecular_Hessian_Result compute(
     double displacement,
     Force& force,
@@ -45,4 +63,30 @@ public:
     std::vector<Group>& group);
 
   static void write_qct_audit(const Molecular_Hessian_Result& result, const Atom& atom);
+
+  static void sample_device(
+    const std::shared_ptr<Molecular_Hessian_Device_Data>& device_data,
+    const std::vector<double>& q_coefficients,
+    const std::vector<double>& p_coefficients,
+    int replicas,
+    int number_of_atoms,
+    const std::vector<double>& mass,
+    const std::vector<double>& reference_position,
+    std::vector<double>& positions,
+    std::vector<double>& velocities);
+
+private:
+  static Molecular_Hessian_Result compute_cpu(
+    double displacement,
+    Force& force,
+    Box& box,
+    Atom& atom,
+    std::vector<Group>& group);
+
+  static Molecular_Hessian_Result compute_device(
+    const Molecular_Hessian_Options& options,
+    Force& force,
+    Box& box,
+    Atom& atom,
+    std::vector<Group>& group);
 };

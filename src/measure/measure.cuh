@@ -59,5 +59,16 @@ public:
     Atom& atom,
     Force& force);
 
+  void process_initial(
+    const int number_of_steps,
+    const int fixed_group,
+    const int move_group,
+    Integrate& integrate,
+    Box& box,
+    std::vector<Group>& group,
+    GPU_Vector<double>& thermo,
+    Atom& atom,
+    Force& force);
+
   std::vector<std::unique_ptr<Property>> properties;
 };

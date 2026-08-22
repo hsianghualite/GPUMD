@@ -16,8 +16,11 @@
 #pragma once
 #include "ensemble.cuh"
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+struct Molecular_Hessian_Device_Data;
 
 class Ensemble_QCT : public Ensemble
 {
@@ -50,6 +53,7 @@ public:
   int number_of_replicas() const { return replicas_; }
   int atoms_per_replica() const { return atoms_per_replica_; }
   const std::vector<std::uint64_t>& replica_seeds() const { return replica_seeds_; }
+  std::vector<double> replica_log_wigner_weights() const;
 
 private:
   enum class Init_Mode { phase_point, harmonic };
@@ -76,6 +80,7 @@ private:
     std::vector<double> mass;
     std::vector<double> reference_position;
     std::vector<Normal_Mode> modes;
+    std::shared_ptr<Molecular_Hessian_Device_Data> device_data;
   };
 
   struct Sampled_Mode {
@@ -109,8 +114,11 @@ private:
   std::string modes_file_;
   std::string eigenvector_file_;
   int exclude_lowest_ = 6;
+  bool exclude_lowest_specified_ = false;
   double min_frequency_ = 1.0e-3;
   double hessian_displacement_ = 1.0e-3;
+  bool hessian_progress_ = true;
+  int hessian_progress_interval_ = 0;
   double stationary_force_tolerance_ = 1.0e-3;
   double sample_temperature_ = 0.0;
   double total_energy_eV_ = -1.0;
@@ -127,11 +135,13 @@ private:
   bool initialized_ = false;
   std::vector<std::uint64_t> replica_seeds_;
   std::vector<Sampled_Point> sampled_points_;
+  QCT_Modes qct_modes_;
+  bool qct_modes_stored_ = false;
 
   void parse_harmonic(const char** param, int num_param);
   void parse_phase_point(const char** param, int num_param);
   QCT_Modes read_qct_modes(const Atom& atom) const;
-  QCT_Modes read_gpumd_modes(const Atom& atom) const;
+  QCT_Modes read_gpumd_modes(const Atom& atom, const Box& box) const;
   QCT_Modes build_automatic_modes(
     Atom& atom,
     Box& box,
@@ -159,4 +169,8 @@ public:
   // temperature1/temperature2 so that measurement keywords (compute_hac, etc.)
   // receive the correct T for the Green-Kubo prefactor.
   double get_sample_temperature() const { return sample_temperature_; }
+
+  // Access the QCT normal modes (for ZPE leakage monitoring in dump_qct).
+  // Returns nullptr if QCT was initialized in phase_point mode (no modes).
+  const QCT_Modes* get_qct_modes() const { return qct_modes_stored_ ? &qct_modes_ : nullptr; }
 };

@@ -208,6 +208,10 @@ Ensemble_QCT::Ensemble_QCT(const char** param, int num_param)
   } else if (mode_source_ == Mode_Source::automatic_hessian) {
     printf("    calculate molecular Hessian from the current model.xyz structure.\n");
     printf("    Hessian displacement is %g A.\n", hessian_displacement_);
+    printf(
+      "    Hessian progress reporting is %s (interval %d columns).\n",
+      hessian_progress_ ? "enabled" : "disabled",
+      hessian_progress_interval_);
   } else if (mode_source_ == Mode_Source::qct_modes) {
     printf("    initialize a harmonic quasi-classical phase point from %s.\n", modes_file_.c_str());
   } else {
@@ -252,6 +256,22 @@ Ensemble_QCT::Ensemble_QCT(const char** param, int num_param)
 Ensemble_QCT::~Ensemble_QCT(void)
 {
   // nothing now
+}
+
+std::vector<double> Ensemble_QCT::replica_log_wigner_weights() const
+{
+  // Explicit phase-point QCT has no anharmonic Wigner reweighting term.
+  std::vector<double> weights(replicas_, 0.0);
+  if (sampled_points_.empty()) {
+    return weights;
+  }
+  if (static_cast<int>(sampled_points_.size()) != replicas_) {
+    qct_input_error("Internal QCT replica count does not match sampled points.");
+  }
+  for (int replica = 0; replica < replicas_; ++replica) {
+    weights[replica] = sampled_points_[replica].log_wigner_weight;
+  }
+  return weights;
 }
 
 void Ensemble_QCT::parse_phase_point(const char** param, int num_param)
@@ -303,6 +323,7 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
       if (exclude_lowest_ < 0) {
         PRINT_INPUT_ERROR("exclude_lowest for ensemble qct harmonic should be non-negative.");
       }
+      exclude_lowest_specified_ = true;
       has_exclude_lowest = true;
     } else if (strcmp(param[i], "min_frequency") == 0) {
       min_frequency_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
@@ -316,6 +337,14 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
         PRINT_INPUT_ERROR("hessian_displacement for ensemble qct harmonic should be positive.");
       }
       has_hessian_displacement = true;
+    } else if (strcmp(param[i], "hessian_progress") == 0) {
+      hessian_progress_ = parse_yes_no(param[i + 1], "hessian_progress");
+    } else if (strcmp(param[i], "hessian_progress_interval") == 0) {
+      hessian_progress_interval_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+      if (hessian_progress_interval_ <= 0) {
+        PRINT_INPUT_ERROR(
+          "hessian_progress_interval for ensemble qct harmonic should be positive.");
+      }
     } else if (strcmp(param[i], "temperature") == 0) {
       sample_temperature_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
       if (sample_temperature_ < 0.0) {
@@ -426,6 +455,11 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
   }
   if (sampling_mode_ == Sampling_Mode::canonical && !has_temperature) {
     PRINT_INPUT_ERROR("ensemble qct canonical requires temperature T.");
+  }
+  if (sampling_mode_ == Sampling_Mode::wigner && sample_temperature_ == 0.0 &&
+      anharmonic_reweight_) {
+    PRINT_INPUT_ERROR(
+      "Wigner anharmonic_reweighting is undefined at T=0; use anharmonic_reweighting no.");
   }
   if (sampling_mode_ == Sampling_Mode::microcanonical && !has_energy) {
     PRINT_INPUT_ERROR("ensemble qct microcanonical requires energy E.");
@@ -642,16 +676,18 @@ Ensemble_QCT::QCT_Modes Ensemble_QCT::read_qct_modes(const Atom& atom) const
   return qct_modes;
 }
 
-Ensemble_QCT::QCT_Modes Ensemble_QCT::read_gpumd_modes(const Atom& atom) const
+Ensemble_QCT::QCT_Modes Ensemble_QCT::read_gpumd_modes(const Atom& atom, const Box& box) const
 {
   QCT_Modes qct_modes;
   qct_modes.num_atoms = atom.number_of_atoms;
   qct_modes.num_modes = atom.number_of_atoms * 3;
-  qct_modes.number_of_rigid_modes = exclude_lowest_;
+  const int default_rigid_modes = (box.pbc_x || box.pbc_y || box.pbc_z) ? 3 : 6;
+  const int rigid_modes = exclude_lowest_specified_ ? exclude_lowest_ : default_rigid_modes;
+  qct_modes.number_of_rigid_modes = rigid_modes;
   qct_modes.symbol = atom.cpu_atom_symbol;
   qct_modes.mass = atom.cpu_mass;
   qct_modes.reference_position = atom.cpu_position_per_atom;
-  if (exclude_lowest_ >= qct_modes.num_modes) {
+  if (rigid_modes >= qct_modes.num_modes) {
     qct_input_error("exclude_lowest should be smaller than 3 * num_atoms.");
   }
   const size_t num_values =
@@ -700,7 +736,7 @@ Ensemble_QCT::QCT_Modes Ensemble_QCT::read_gpumd_modes(const Atom& atom) const
     return std::fabs(qct_modes.modes[first].frequency_THz) <
            std::fabs(qct_modes.modes[second].frequency_THz);
   });
-  for (int n = 0; n < exclude_lowest_; ++n) {
+  for (int n = 0; n < rigid_modes; ++n) {
     qct_modes.modes[mode_indices[n]].rigid = true;
   }
   for (auto& mode : qct_modes.modes) {
@@ -716,8 +752,12 @@ Ensemble_QCT::QCT_Modes Ensemble_QCT::build_automatic_modes(
   std::vector<Group>& group,
   Force& force) const
 {
+  Molecular_Hessian_Options hessian_options;
+  hessian_options.displacement = hessian_displacement_;
+  hessian_options.report_progress = hessian_progress_;
+  hessian_options.progress_interval = hessian_progress_interval_;
   Molecular_Hessian_Result hessian =
-    Molecular_Hessian::compute(hessian_displacement_, force, box, atom, group);
+    Molecular_Hessian::compute(hessian_options, force, box, atom, group);
   if (hessian.max_force > stationary_force_tolerance_) {
     qct_input_error(
       "QCT automatic Hessian requires a stationary model.xyz structure: maximum force is " +
@@ -732,6 +772,7 @@ Ensemble_QCT::QCT_Modes Ensemble_QCT::build_automatic_modes(
   qct_modes.symbol = atom.cpu_atom_symbol;
   qct_modes.mass = atom.cpu_mass;
   qct_modes.reference_position = atom.cpu_position_per_atom;
+  qct_modes.device_data = hessian.device_data;
   qct_modes.modes.reserve(qct_modes.num_modes);
 
   for (int mode_index = 0; mode_index < qct_modes.num_modes; ++mode_index) {
@@ -1066,10 +1107,11 @@ Ensemble_QCT::Sampled_Point Ensemble_QCT::sample_harmonic_point(
     }
   } else {
 
-  for (const auto& mode : qct_modes.modes) {
+  for (size_t mode_position = 0; mode_position < qct_modes.modes.size(); ++mode_position) {
+    const auto& mode = qct_modes.modes[mode_position];
+    auto& mode_output = point.modes[mode_position];
     Sampled_Mode sampled_mode;
     if (mode.index == qct_modes.reaction_mode_index || !mode.active) {
-      point.modes.emplace_back(sampled_mode);
       continue;
     }
 
@@ -1088,7 +1130,7 @@ Ensemble_QCT::Sampled_Point Ensemble_QCT::sample_harmonic_point(
       if (phase_mode_ == Phase_Mode::random) {
         sampled_mode.phase = 2.0 * PI * uniform_01(rng);
       } else {
-        sampled_mode.phase = 0.25 * PI;
+        sampled_mode.phase = 0.0;
       }
       sampled_mode.Q =
         std::sqrt(2.0 * sampled_mode.energy) * std::cos(sampled_mode.phase) / omega;
@@ -1103,7 +1145,7 @@ Ensemble_QCT::Sampled_Point Ensemble_QCT::sample_harmonic_point(
       }
       point.total_sampled_energy += sampled_mode.energy;
     }
-    point.modes.emplace_back(sampled_mode);
+    mode_output = sampled_mode;
   }
   } // end non-wigner branch
 
@@ -1298,6 +1340,8 @@ void Ensemble_QCT::expand_atom_for_batch(
   const auto old_position = atom.cpu_position_per_atom;
   const auto old_velocity = atom.cpu_velocity_per_atom;
   const auto old_type_size = atom.cpu_type_size;
+  const bool had_position_temp = atom.position_temp.size() > 0;
+  const bool had_unwrapped_position = atom.unwrapped_position.size() > 0;
   std::vector<std::vector<int>> old_labels(group.size());
   for (size_t m = 0; m < group.size(); ++m) {
     old_labels[m] = group[m].cpu_label;
@@ -1341,6 +1385,19 @@ void Ensemble_QCT::expand_atom_for_batch(
     group[m].find_contents(total_atoms);
   }
   allocate_memory_gpu(group, atom, thermo);
+  if (had_position_temp) {
+    atom.position_temp.resize(static_cast<size_t>(total_atoms) * 3);
+    atom.position_temp.copy_from_device(atom.position_per_atom.data());
+  }
+  if (had_unwrapped_position) {
+    atom.unwrapped_position.resize(static_cast<size_t>(total_atoms) * 3);
+    atom.unwrapped_position.copy_from_device(atom.position_per_atom.data());
+  }
+  // Audit heat_per_atom: if it was pre-allocated (e.g. by a prior compute_hac
+  // preprocess that was rejected), resize it to match the expanded atom count.
+  if (atom.heat_per_atom.size() > 0) {
+    atom.heat_per_atom.resize(static_cast<size_t>(total_atoms) * 5, 0.0);
+  }
 }
 
 std::vector<double> Ensemble_QCT::evaluate_batch_potential_energy(
@@ -1370,6 +1427,10 @@ void Ensemble_QCT::write_initial_outputs(const QCT_Modes& qct_modes, const Box& 
     qct_input_error("Cannot open qct_initial_summary.csv for writing.");
   }
   summary_output << std::setprecision(17);
+  // Note: log_wigner_weight is the authoritative weight column.
+  // The legacy wigner_weight column is clamped to [0, exp(700)] for
+  // backward compatibility but may lose relative precision when any
+  // log weight exceeds 700.  Consumers must prefer log_wigner_weight.
   summary_output
     << "replica,seed,total_sampled_energy_eV,rotational_energy_eV,reaction_energy_eV,"
        "potential_correction_eV,stable_velocity_scale,wigner_weight,log_wigner_weight\n";
@@ -1440,7 +1501,7 @@ void Ensemble_QCT::write_initial_outputs(const QCT_Modes& qct_modes, const Box& 
                        << box.cpu_h[7] << ' ' << box.cpu_h[2] << ' ' << box.cpu_h[5] << ' '
                        << box.cpu_h[8]
                        << "\" Properties=species:S:1:pos:R:3:mass:R:1:vel:R:3 Replica="
-                       << replica << " Seed=" << point.seed << " temperature="
+                       << replica << " Step=0 Time=0 Seed=" << point.seed << " temperature="
                        << sample_temperature_ << "\n";
     for (int n = 0; n < qct_modes.num_atoms; ++n) {
       phase_point_output << qct_modes.symbol[n];
@@ -1463,9 +1524,6 @@ void Ensemble_QCT::write_initial_outputs(const QCT_Modes& qct_modes, const Box& 
 void Ensemble_QCT::initialize_harmonic_replicas(
   Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force)
 {
-  if (replicas_ > 1 && (box.pbc_x || box.pbc_y || box.pbc_z)) {
-    qct_input_error("QCT batch currently requires pbc=F F F in model.xyz.");
-  }
   atoms_per_replica_ = atom.number_of_atoms;
   QCT_Modes qct_modes;
   if (mode_source_ == Mode_Source::automatic_hessian) {
@@ -1473,7 +1531,7 @@ void Ensemble_QCT::initialize_harmonic_replicas(
   } else if (mode_source_ == Mode_Source::qct_modes) {
     qct_modes = read_qct_modes(atom);
   } else {
-    qct_modes = read_gpumd_modes(atom);
+    qct_modes = read_gpumd_modes(atom, box);
   }
   classify_stationary_point(qct_modes);
 
@@ -1487,6 +1545,39 @@ void Ensemble_QCT::initialize_harmonic_replicas(
     const std::uint64_t replica_seed = qct_sampling_seed(base_seed, 0);
     replica_seeds_.emplace_back(replica_seed);
     sampled_points_.emplace_back(sample_harmonic_point(qct_modes, replica_seed));
+  }
+
+  if (qct_modes.device_data) {
+    const int dimension = qct_modes.num_atoms * 3;
+    std::vector<double> q_coefficients(static_cast<size_t>(dimension) * replicas_, 0.0);
+    std::vector<double> p_coefficients(q_coefficients.size(), 0.0);
+    for (int replica = 0; replica < replicas_; ++replica) {
+      for (int mode = 0; mode < dimension; ++mode) {
+        q_coefficients[mode + dimension * replica] = sampled_points_[replica].modes[mode].Q;
+        p_coefficients[mode + dimension * replica] = sampled_points_[replica].modes[mode].P;
+      }
+    }
+    std::vector<double> positions;
+    std::vector<double> velocities;
+    Molecular_Hessian::sample_device(
+      qct_modes.device_data,
+      q_coefficients,
+      p_coefficients,
+      replicas_,
+      qct_modes.num_atoms,
+      qct_modes.mass,
+      qct_modes.reference_position,
+      positions,
+      velocities);
+    for (int replica = 0; replica < replicas_; ++replica) {
+      sampled_points_[replica].position.assign(
+        positions.begin() + static_cast<size_t>(dimension) * replica,
+        positions.begin() + static_cast<size_t>(dimension) * (replica + 1));
+      sampled_points_[replica].velocity.assign(
+        velocities.begin() + static_cast<size_t>(dimension) * replica,
+        velocities.begin() + static_cast<size_t>(dimension) * (replica + 1));
+    }
+    std::printf("    generated harmonic mode phase points with the GPU mode basis.\n");
   }
 
   const bool is_wigner = sampling_mode_ == Sampling_Mode::wigner;
@@ -1532,9 +1623,21 @@ void Ensemble_QCT::initialize_harmonic_replicas(
           v_harmonic += 0.5 * omega * omega * Q * Q;
         }
         const double dv = v_real - v_harmonic;
-        const double beta = (sample_temperature_ > 0.0) ? 1.0 / (K_B * sample_temperature_) : 0.0;
+        if (!std::isfinite(dv)) {
+          qct_input_error("Anharmonic reweighting encountered a non-finite potential difference.");
+        }
+        const double beta = 1.0 / (K_B * sample_temperature_);
         point.log_wigner_weight = -beta * dv;
-        point.wigner_weight = std::exp(point.log_wigner_weight);
+        if (!std::isfinite(point.log_wigner_weight)) {
+          qct_input_error("Anharmonic reweighting produced a non-finite log weight.");
+        }
+        // Keep the legacy linear-weight column finite; consumers must prefer
+        // log_wigner_weight for ratios spanning a wider dynamic range.
+        point.wigner_weight = point.log_wigner_weight > 700.0
+                                ? std::exp(700.0)
+                                : (point.log_wigner_weight < -745.0
+                                     ? 0.0
+                                     : std::exp(point.log_wigner_weight));
         point.potential_correction = dv;
       } else {
         point.wigner_weight = 1.0;
@@ -1624,6 +1727,8 @@ void Ensemble_QCT::initialize_harmonic_replicas(
   }
   atom.position_per_atom.copy_from_host(atom.cpu_position_per_atom.data());
   atom.velocity_per_atom.copy_from_host(atom.cpu_velocity_per_atom.data());
+  qct_modes_ = qct_modes;
+  qct_modes_stored_ = true;
   write_initial_outputs(qct_modes, box);
 
   if (replicas_ > 1) {

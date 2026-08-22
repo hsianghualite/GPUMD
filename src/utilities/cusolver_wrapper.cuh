@@ -19,3 +19,12 @@ void eig_hermitian_QR(size_t, double*, double*, double*);
 void eig_hermitian_Jacobi(size_t, double*, double*, double*);
 void eig_hermitian_Jacobi_batch(size_t, size_t, double*, double*, double*);
 void eigenvectors_symmetric_Jacobi(size_t N, double* A, double* W_cpu, double* eigenvectors_cpu);
+
+// Solve a real symmetric FP64 matrix already resident on the device. The
+// matrix is overwritten by column-major eigenvectors and W_device receives
+// ascending eigenvalues. workspace_bytes may be used for diagnostics.
+int eigenvectors_symmetric_device(
+  size_t N,
+  double* A_device,
+  double* W_device,
+  size_t* workspace_bytes);

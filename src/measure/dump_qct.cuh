@@ -38,6 +38,17 @@ public:
     Atom& atom,
     Force& force);
 
+  virtual void process_initial(
+    const int number_of_steps,
+    const int fixed_group,
+    const int move_group,
+    Integrate& integrate,
+    Box& box,
+    std::vector<Group>& group,
+    GPU_Vector<double>& thermo,
+    Atom& atom,
+    Force& force);
+
   virtual void postprocess(
     Atom& atom,
     Box& box,
@@ -50,9 +61,19 @@ private:
   int dump_interval_ = 1;
   int replicas_ = 1;
   int atoms_per_replica_ = 0;
+  bool zpe_monitoring_ = false;
+  bool zpe_requested_ = false;
+  int num_active_modes_ = 0;
+  std::vector<int> mode_indices_;
+  std::vector<double> mode_frequencies_;
+  std::vector<std::vector<double>> mode_eigenvectors_; // (3N per mode) flattened
+  std::vector<double> reference_position_;
+  std::vector<double> initial_mode_energies_;          // per replica per mode
   std::string trajectory_filename_ = "qct_trajectory.xyz";
   std::string thermo_filename_ = "qct_thermo.csv";
+  std::string zpe_filename_ = "qct_zpe.csv";
   FILE* trajectory_ = nullptr;
   FILE* thermo_ = nullptr;
+  FILE* zpe_file_ = nullptr;
   std::vector<double> cpu_potential_;
 };

@@ -61,5 +61,9 @@ public:
   void parse(const char**, int);
 
 private:
+  int number_of_replicas_ = 1;
+  int atoms_per_replica_ = 0;
+  bool batch_mode_ = false;
+  std::vector<double> normalized_weights_;
   GPU_Vector<double> heat_all;
 };

@@ -117,3 +117,28 @@ void Measure::process(
       force);
   }
 }
+
+void Measure::process_initial(
+  const int number_of_steps,
+  const int fixed_group,
+  const int move_group,
+  Integrate& integrate,
+  Box& box,
+  std::vector<Group>& group,
+  GPU_Vector<double>& thermo,
+  Atom& atom,
+  Force& force)
+{
+  for (auto& prop : properties) {
+    prop->process_initial(
+      number_of_steps,
+      fixed_group,
+      move_group,
+      integrate,
+      box,
+      group,
+      thermo,
+      atom,
+      force);
+  }
+}

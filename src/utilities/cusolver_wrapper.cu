@@ -28,6 +28,7 @@ Some wrappers for the cuSOLVER library
 #endif
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 void eig_hermitian_QR(size_t N, double* AR, double* AI, double* W_cpu)
 {
@@ -141,6 +142,51 @@ void eigenvectors_symmetric_Jacobi(size_t N, double* A_cpu, double* W_cpu, doubl
   // free
   gpusolverDnDestroy(handle);
   gpusolverDnDestroySyevjInfo(para);
+}
+
+int eigenvectors_symmetric_device(
+  size_t N,
+  double* A_device,
+  double* W_device,
+  size_t* workspace_bytes)
+{
+#ifdef USE_HIP
+  (void)N;
+  (void)A_device;
+  (void)W_device;
+  if (workspace_bytes != nullptr) {
+    *workspace_bytes = 0;
+  }
+  return -1;
+#else
+  gpusolverDnHandle_t handle = NULL;
+  gpusolverDnCreate(&handle);
+  gpusolverEigMode_t jobz = GPUSOLVER_EIG_MODE_VECTOR;
+  gpusolverFillMode_t uplo = GPUSOLVER_FILL_MODE_LOWER;
+  int lwork = 0;
+  gpusolverDnDsyevd_bufferSize(
+    handle, jobz, uplo, static_cast<int>(N), A_device, static_cast<int>(N), W_device, &lwork);
+  if (workspace_bytes != nullptr) {
+    *workspace_bytes = static_cast<size_t>(std::max(lwork, 0)) * sizeof(double);
+  }
+  GPU_Vector<double> work(static_cast<size_t>(std::max(lwork, 0)));
+  GPU_Vector<int> info(1);
+  gpusolverDnDsyevd(
+    handle,
+    jobz,
+    uplo,
+    static_cast<int>(N),
+    A_device,
+    static_cast<int>(N),
+    W_device,
+    work.data(),
+    lwork,
+    info.data());
+  int info_host = 0;
+  info.copy_to_host(&info_host);
+  gpusolverDnDestroy(handle);
+  return info_host;
+#endif
 }
 
 void eig_hermitian_Jacobi_batch(size_t N, size_t batch_size, double* AR, double* AI, double* W_cpu)

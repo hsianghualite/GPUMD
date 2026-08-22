@@ -25,6 +25,7 @@ Run simulation according to the inputs in the run.in file.
 #include "electron_stop.cuh"
 #include "force/force.cuh"
 #include "integrate/ensemble.cuh"
+#include "integrate/ensemble_qct.cuh"
 #include "integrate/integrate.cuh"
 #include "measure/active.cuh"
 #include "measure/adf.cuh"
@@ -160,10 +161,7 @@ Run::Run(bool skip_run, const std::string& run_input_path)
   velocity.initialize(
     has_velocity_in_xyz,
     300,
-    atom.cpu_mass,
-    atom.cpu_position_per_atom,
-    atom.cpu_velocity_per_atom,
-    atom.velocity_per_atom,
+    atom,
     false,
     123);
   if (has_velocity_in_xyz) {
@@ -218,7 +216,11 @@ void Run::execute_run_in()
 
 void Run::perform_a_run()
 {
-  integrate.initialize(time_step, atom, box, group, thermo, number_of_steps);
+  const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+  if (qct != nullptr && qct->is_batch()) {
+    PRINT_INPUT_ERROR("MDI does not support native QCT/LSC-IVR batch execution.");
+  }
+  integrate.initialize(time_step, atom, box, group, thermo, force, number_of_steps);
   mc.initialize();
   measure.initialize(number_of_steps, time_step, integrate, group, atom, box, force);
 
@@ -249,20 +251,24 @@ void Run::perform_a_run()
       atom.mass);
   }
 
+  measure.process_initial(
+    number_of_steps,
+    integrate.fixed_group,
+    integrate.move_group,
+    integrate,
+    box,
+    group,
+    thermo,
+    atom,
+    force);
+
   double initial_time_step = time_step;
 
   const auto time_begin = std::chrono::high_resolution_clock::now();
 
   for (int step = 0; step < number_of_steps; ++step) {
 
-    velocity.correct_velocity(
-      step,
-      group,
-      atom.cpu_mass,
-      atom.position_per_atom,
-      atom.cpu_position_per_atom,
-      atom.cpu_velocity_per_atom,
-      atom.velocity_per_atom);
+    velocity.correct_velocity(step, group, atom);
 
     calculate_time_step(
       max_distance_per_step, atom.velocity_per_atom, initial_time_step, time_step);
@@ -323,7 +329,18 @@ void Run::perform_a_run()
 
     int base = (10 <= number_of_steps) ? (number_of_steps / 10) : 1;
     if (0 == (step + 1) % base) {
-      printf("    %d steps completed.\n", step + 1);
+      const auto time_now = std::chrono::high_resolution_clock::now();
+      const std::chrono::duration<double> elapsed = time_now - time_begin;
+      int steps_done = step + 1;
+      int steps_left = number_of_steps - steps_done;
+      double eta_seconds = (steps_left > 0) ? elapsed.count() / steps_done * steps_left : 0.0;
+      printf(
+        "    %d steps completed (%.1f%%). Elapsed: %.1f s. ETA: %.1f s (%.1f min).\n",
+        steps_done,
+        100.0 * steps_done / number_of_steps,
+        elapsed.count(),
+        eta_seconds,
+        eta_seconds / 60.0);
       fflush(stdout);
     }
   }
@@ -439,7 +456,11 @@ void Run::mdi_initialize_for_mdi()
 {
   // initialize integrator, mc, and measure for single-step operation
   int one_steps = 1;
-  integrate.initialize(time_step, atom, box, group, thermo, one_steps);
+  const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+  if (qct != nullptr && qct->is_batch()) {
+    PRINT_INPUT_ERROR("MDI does not support native QCT/LSC-IVR batch execution.");
+  }
+  integrate.initialize(time_step, atom, box, group, thermo, force, one_steps);
   mc.initialize();
   measure.initialize(one_steps, time_step, integrate, group, atom, box, force);
   // reset MDI step counter so dump intervals behave predictably
@@ -468,14 +489,7 @@ void Run::mdi_step_one()
   // Notes:
   // - We intentionally do not call the internal potential when external forces are provided.
   // - measure.process is called every step, enabling dump_* keywords to write outputs.
-  velocity.correct_velocity(
-    mdi_step_counter,
-    group,
-    atom.cpu_mass,
-    atom.position_per_atom,
-    atom.cpu_position_per_atom,
-    atom.cpu_velocity_per_atom,
-    atom.velocity_per_atom);
+  velocity.correct_velocity(mdi_step_counter, group, atom);
 
   integrate.current_step = mdi_step_counter;
   global_time += time_step;
@@ -578,49 +592,20 @@ void Run::parse_one_keyword(std::vector<std::string>& tokens)
       integrate.fixed_grouping_method,
       force,
       box,
-      atom.position_per_atom,
-      atom.type,
-      group,
-      atom.potential_per_atom,
-      atom.force_per_atom,
-      atom.virial_per_atom);
+      atom,
+      group);
   } else if (strcmp(param[0], "compute_phonon") == 0) {
     Hessian hessian;
     hessian.parse(param, num_param);
-    hessian.compute(
-      force,
-      box,
-      atom.cpu_position_per_atom,
-      atom.position_per_atom,
-      atom.type,
-      group,
-      atom.potential_per_atom,
-      atom.force_per_atom,
-      atom.virial_per_atom);
+    hessian.compute(force, box, atom, group);
   } else if (strcmp(param[0], "compute_cohesive") == 0) {
     Cohesive cohesive;
     cohesive.parse(param, num_param, 0);
-    cohesive.compute(
-      box,
-      atom.position_per_atom,
-      atom.type,
-      group,
-      atom.potential_per_atom,
-      atom.force_per_atom,
-      atom.virial_per_atom,
-      force);
+    cohesive.compute(box, atom, group, force);
   } else if (strcmp(param[0], "compute_elastic") == 0) {
     Cohesive cohesive;
     cohesive.parse(param, num_param, 1);
-    cohesive.compute(
-      box,
-      atom.position_per_atom,
-      atom.type,
-      group,
-      atom.potential_per_atom,
-      atom.force_per_atom,
-      atom.virial_per_atom,
-      force);
+    cohesive.compute(box, atom, group, force);
   } else if (strcmp(param[0], "change_box") == 0) {
     parse_change_box(param, num_param);
   } else if (strcmp(param[0], "velocity") == 0) {
@@ -829,10 +814,7 @@ void Run::parse_velocity(const char** param, int num_param)
   velocity.initialize(
     has_velocity_in_xyz,
     initial_temperature,
-    atom.cpu_mass,
-    atom.cpu_position_per_atom,
-    atom.cpu_velocity_per_atom,
-    atom.velocity_per_atom,
+    atom,
     use_seed,
     seed);
   if (!has_velocity_in_xyz) {
