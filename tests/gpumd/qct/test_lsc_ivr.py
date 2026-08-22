@@ -12,6 +12,7 @@ import csv
 import importlib.util
 import json
 import math
+import subprocess
 import sys
 from pathlib import Path
 
@@ -305,6 +306,67 @@ class TestReweightingConsistency:
         corr_unequal = mod_lsc.compute_correlation(replica_trajs, weights_unequal, op, op)
         assert abs(corr_unequal.c_ab_normalized[0] - 2.0) < 1e-10
 
+    def test_ratio_standard_error_and_lag_zero(self, tmp_path):
+        traj_path = tmp_path / "trajectory.xyz"
+        with traj_path.open("w", encoding="utf-8") as output:
+            for rid, value in enumerate([0.0, 1.0, 2.0, 3.0]):
+                for step in range(2):
+                    position = np.array([[value, 0.0, 0.0]])
+                    write_extxyz_frame(
+                        output,
+                        position,
+                        np.zeros((1, 3)),
+                        np.array([1.0]),
+                        ["H"],
+                        replica=rid,
+                        step=step,
+                        time_fs=float(step),
+                    )
+        frames = mod_analyzer.read_extxyz(str(traj_path))
+        replica_trajs = mod_lsc.split_replica_trajectory(frames)
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+        corr = mod_lsc.compute_correlation(replica_trajs, {}, op, op)
+
+        assert len(corr.time_fs) == 2
+        assert corr.c_ab_normalized[0] == pytest.approx(3.5)
+        assert corr.std_error[0] == pytest.approx(math.sqrt(49.0 / 16.0))
+        lag_zero = mod_lsc.compute_correlation(replica_trajs, {}, op, op, max_lag_fs=0.0)
+        assert len(lag_zero.time_fs) == 1
+
+    def test_extreme_log_weights_preserve_relative_ratio(self, tmp_path):
+        summary_path = tmp_path / "qct_initial_summary.csv"
+        with summary_path.open("w", newline="") as output:
+            writer = csv.writer(output)
+            writer.writerow(["replica", "log_wigner_weight"])
+            writer.writerow([0, 1000.0])
+            writer.writerow([1, 999.0])
+        weights = mod_lsc.load_wigner_weights(summary_path)
+        assert weights[0] == pytest.approx(1.0)
+        assert weights[1] == pytest.approx(math.exp(-1.0))
+
+    def test_dipole_attachment_uses_step(self):
+        frame0 = mod_analyzer.Frame(
+            symbols=["H"], positions=np.zeros((1, 3)), masses=np.ones(1),
+            velocities=np.zeros((1, 3)), lattice=None,
+            pbc=np.array([False, False, False]), time_fs=0.0,
+            metadata={"step": "0"},
+        )
+        frame1 = mod_analyzer.Frame(
+            symbols=["H"], positions=np.zeros((1, 3)), masses=np.ones(1),
+            velocities=np.zeros((1, 3)), lattice=None,
+            pbc=np.array([False, False, False]), time_fs=1.0,
+            metadata={"step": "5"},
+        )
+        dipoles = {
+            0: [
+                mod_lsc.DipoleFrame(5, 0, np.array([5.0, 0.0, 0.0])),
+                mod_lsc.DipoleFrame(0, 0, np.array([0.0, 0.0, 0.0])),
+            ]
+        }
+        mod_lsc.attach_dipole_data({0: [frame0, frame1]}, dipoles)
+        assert frame0.metadata["_nep_dipole"][0] == 0.0
+        assert frame1.metadata["_nep_dipole"][0] == 5.0
+
 
 # ---------------------------------------------------------------------------
 # Test 3: Operator registry
@@ -573,3 +635,632 @@ def test_lsc_ivr_batch_file_exists():
     content = batch.read_text()
     assert "sbatch" in content.lower() or "SBATCH" in content
     assert "run.in" in content
+
+
+# ---------------------------------------------------------------------------
+# Test 7: load_dipole_out — single and batch formats
+# ---------------------------------------------------------------------------
+
+class TestLoadDipoleOut:
+    def test_single_trajectory_format(self, tmp_path):
+        """dipole.out with 4 columns: step dx dy dz."""
+        dipole_path = tmp_path / "dipole.out"
+        with dipole_path.open("w") as f:
+            f.write("0 1.0 2.0 3.0\n")
+            f.write("1 1.1 2.1 3.1\n")
+            f.write("2 1.2 2.2 3.2\n")
+
+        result = mod_lsc.load_dipole_out(dipole_path)
+        assert len(result) == 1
+        assert 0 in result
+        frames = result[0]
+        assert len(frames) == 3
+        assert frames[0].step == 0
+        np.testing.assert_allclose(frames[0].dipole, [1.0, 2.0, 3.0])
+        assert frames[1].step == 1
+        np.testing.assert_allclose(frames[1].dipole, [1.1, 2.1, 3.1])
+        assert frames[2].step == 2
+
+    def test_batch_format(self, tmp_path):
+        """dipole.out with 5 columns: step replica dx dy dz."""
+        dipole_path = tmp_path / "dipole.out"
+        with dipole_path.open("w") as f:
+            f.write("0 0 1.0 2.0 3.0\n")
+            f.write("0 1 4.0 5.0 6.0\n")
+            f.write("1 0 1.1 2.1 3.1\n")
+            f.write("1 1 4.1 5.1 6.1\n")
+
+        result = mod_lsc.load_dipole_out(dipole_path)
+        assert len(result) == 2
+        assert set(result.keys()) == {0, 1}
+
+        assert len(result[0]) == 2
+        assert result[0][0].step == 0
+        np.testing.assert_allclose(result[0][0].dipole, [1.0, 2.0, 3.0])
+        assert result[0][1].step == 1
+        np.testing.assert_allclose(result[0][1].dipole, [1.1, 2.1, 3.1])
+
+        assert len(result[1]) == 2
+        assert result[1][0].step == 0
+        np.testing.assert_allclose(result[1][0].dipole, [4.0, 5.0, 6.0])
+        assert result[1][1].step == 1
+        np.testing.assert_allclose(result[1][1].dipole, [4.1, 5.1, 6.1])
+
+    def test_sorted_by_step(self, tmp_path):
+        """Ensure frames are sorted by step even if file is unordered."""
+        dipole_path = tmp_path / "dipole.out"
+        with dipole_path.open("w") as f:
+            f.write("2 0 3.0 2.0 1.0\n")
+            f.write("0 0 1.0 0.0 0.0\n")
+            f.write("1 0 2.0 1.0 0.5\n")
+
+        result = mod_lsc.load_dipole_out(dipole_path)
+        steps = [f.step for f in result[0]]
+        assert steps == [0, 1, 2]
+
+    def test_nonexistent_file_returns_empty(self, tmp_path):
+        """Missing file returns empty dict (no exception)."""
+        result = mod_lsc.load_dipole_out(tmp_path / "nonexistent.out")
+        assert result == {}
+
+    def test_blank_lines_skipped(self, tmp_path):
+        """Blank lines in dipole.out are ignored."""
+        dipole_path = tmp_path / "dipole.out"
+        with dipole_path.open("w") as f:
+            f.write("\n")
+            f.write("0 1.0 2.0 3.0\n")
+            f.write("\n")
+            f.write("1 1.1 2.1 3.1\n")
+            f.write("\n")
+
+        result = mod_lsc.load_dipole_out(dipole_path)
+        assert len(result) == 1
+        assert len(result[0]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 8: compute_convergence_diagnostics — known weights and replicas
+# ---------------------------------------------------------------------------
+
+class TestComputeConvergenceDiagnostics:
+    def _make_frame(self, pos_x: float, vel_x: float = 0.0):
+        """Create a minimal aq.Frame for testing."""
+        import tempfile, os
+        fd, fname = tempfile.mkstemp(suffix=".xyz")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("1\n")
+                f.write(f'Time=0 pbc="F F F" Properties=species:S:1:pos:R:3:mass:R:1:vel:R:3\n')
+                f.write(f"H {pos_x:.12g} 0 0 1.0 {vel_x:.12g} 0 0\n")
+            return mod_analyzer.read_extxyz(fname)[0]
+        finally:
+            os.unlink(fname)
+
+    def test_uniform_weights(self):
+        """With uniform weights, C(0) is the simple mean of A(0)*B(0)."""
+        # 4 replicas, uniform weights, position operator on both sides
+        replica_trajs = {}
+        for rid, x in enumerate([1.0, 2.0, 3.0, 4.0]):
+            replica_trajs[rid] = [self._make_frame(x)]
+
+        weights = {rid: 1.0 for rid in range(4)}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        diag = mod_lsc.compute_convergence_diagnostics(
+            replica_trajs, weights, op, op, max_lag=4
+        )
+
+        assert diag.n_replicas == 4
+        assert abs(diag.n_effective - 4.0) < 1e-10
+        # C(0) = mean of x² = (1+4+9+16)/4 = 7.5
+        assert abs(diag.c0_weighted_mean - 7.5) < 1e-8
+        # c0_values = [1, 4, 9, 16]
+        np.testing.assert_allclose(diag.c0_values, [1.0, 4.0, 9.0, 16.0])
+
+    def test_nonuniform_weights(self):
+        """Weighted mean differs from simple mean."""
+        replica_trajs = {}
+        for rid, x in enumerate([1.0, 2.0, 3.0, 4.0]):
+            replica_trajs[rid] = [self._make_frame(x)]
+
+        # Weight replica 0 and 3 heavily
+        weights = {0: 3.0, 1: 1.0, 2: 1.0, 3: 3.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        diag = mod_lsc.compute_convergence_diagnostics(
+            replica_trajs, weights, op, op, max_lag=4
+        )
+
+        # Weighted mean = (3*1 + 1*4 + 1*9 + 3*16) / (3+1+1+3) = (3+4+9+48)/8 = 64/8 = 8.0
+        assert abs(diag.c0_weighted_mean - 8.0) < 1e-8
+        # n_effective = (sum w)² / sum(w²) = 64 / (9+1+1+9) = 64/20 = 3.2
+        assert abs(diag.n_effective - 3.2) < 1e-8
+        # max_to_mean = 3.0 / 2.0 = 1.5 (mean of positive weights = 8/4 = 2.0)
+        assert abs(diag.max_to_mean_ratio - 1.5) < 1e-8
+
+    def test_all_zero_weights_raises(self):
+        """All-zero weights should raise ValueError."""
+        replica_trajs = {0: [self._make_frame(1.0)]}
+        weights = {0: 0.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        with pytest.raises(ValueError, match="All replica weights are zero"):
+            mod_lsc.compute_convergence_diagnostics(
+                replica_trajs, weights, op, op
+            )
+
+    def test_negative_weight_raises(self):
+        """Negative weights should raise ValueError."""
+        replica_trajs = {0: [self._make_frame(1.0)]}
+        weights = {0: -1.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        with pytest.raises(ValueError, match="non-finite or negative"):
+            mod_lsc.compute_convergence_diagnostics(
+                replica_trajs, weights, op, op
+            )
+
+    def test_convergence_curve_monotonic_n(self):
+        """Convergence curve should have increasing n values."""
+        replica_trajs = {}
+        for rid in range(6):
+            replica_trajs[rid] = [self._make_frame(float(rid + 1))]
+        weights = {rid: 1.0 for rid in range(6)}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        diag = mod_lsc.compute_convergence_diagnostics(
+            replica_trajs, weights, op, op, max_lag=10
+        )
+
+        assert len(diag.convergence_n) == 6
+        assert list(diag.convergence_n) == [1, 2, 3, 4, 5, 6]
+
+    def test_single_replica(self):
+        """Single replica: std_error should be 0, no crash."""
+        replica_trajs = {0: [self._make_frame(2.0)]}
+        weights = {0: 1.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+
+        diag = mod_lsc.compute_convergence_diagnostics(
+            replica_trajs, weights, op, op
+        )
+
+        assert diag.n_replicas == 1
+        assert diag.c0_std_error == 0.0
+        assert abs(diag.c0_weighted_mean - 4.0) < 1e-8
+
+
+# ---------------------------------------------------------------------------
+# Test 9: load_zpe_csv — ZPE CSV validation
+# ---------------------------------------------------------------------------
+
+class TestLoadZpeCsv:
+    def test_valid_csv(self, tmp_path):
+        """A well-formed qct_zpe.csv loads successfully."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+            f.write("0,0,0.0,0,15.0,0.031,0.031,0.0\n")
+            f.write("0,1,0.5,0,15.0,0.032,0.031,0.001\n")
+            f.write("0,0,0.0,1,20.0,0.041,0.041,0.0\n")
+            f.write("0,1,0.5,1,20.0,0.042,0.041,0.001\n")
+
+        rows = mod_analyzer.load_zpe_csv(zpe_path)
+        assert len(rows) == 4
+        assert rows[0]["replica"] == 0
+        assert rows[0]["step"] == 0
+        assert rows[0]["mode"] == 0
+        assert abs(rows[0]["mode_energy_eV"] - 0.031) < 1e-12
+
+    def test_missing_column_raises(self, tmp_path):
+        """Missing required column should raise ValueError."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,mode_energy_eV\n")
+            f.write("0,0,0.0,0,15.0,0.031\n")
+
+        with pytest.raises(ValueError, match="missing required columns"):
+            mod_analyzer.load_zpe_csv(zpe_path)
+
+    def test_duplicate_key_raises(self, tmp_path):
+        """Duplicate (replica, step, mode) should raise ValueError."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+            f.write("0,0,0.0,0,15.0,0.031,0.031,0.0\n")
+            f.write("0,0,0.0,0,15.0,0.031,0.031,0.0\n")
+
+        with pytest.raises(ValueError, match="duplicate"):
+            mod_analyzer.load_zpe_csv(zpe_path)
+
+    def test_non_monotonic_step_raises(self, tmp_path):
+        """Non-monotonic step within a (replica, mode) group should raise."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+            f.write("0,5,2.5,0,15.0,0.031,0.031,0.0\n")
+            f.write("0,3,1.5,0,15.0,0.031,0.031,0.0\n")
+
+        with pytest.raises(ValueError, match="non-monotonic"):
+            mod_analyzer.load_zpe_csv(zpe_path)
+
+    def test_non_finite_value_raises(self, tmp_path):
+        """Non-finite (nan/inf) numeric values should raise."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+            f.write("0,0,0.0,0,15.0,nan,0.031,0.0\n")
+
+        with pytest.raises(ValueError, match="non-finite"):
+            mod_analyzer.load_zpe_csv(zpe_path)
+
+    def test_empty_file_raises(self, tmp_path):
+        """Empty data file (header only, no rows) should raise."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+
+        with pytest.raises(ValueError, match="no data rows"):
+            mod_analyzer.load_zpe_csv(zpe_path)
+
+    def test_nonexistent_file_raises(self, tmp_path):
+        """Missing file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            mod_analyzer.load_zpe_csv(tmp_path / "no_such_file.csv")
+
+    def test_multiple_replicas_and_modes(self, tmp_path):
+        """Multiple replicas with multiple modes load correctly."""
+        zpe_path = tmp_path / "qct_zpe.csv"
+        with zpe_path.open("w") as f:
+            f.write("replica,step,time_fs,mode,frequency_THz,"
+                    "mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV\n")
+            for rid in range(3):
+                for step in range(2):
+                    for mode in range(2):
+                        freq = 15.0 + mode * 5.0
+                        e = 0.031 + step * 0.001
+                        drift = 0.001 * step
+                        f.write(f"{rid},{step},{step*0.5},{mode},{freq},{e},{0.031},{drift}\n")
+
+        rows = mod_analyzer.load_zpe_csv(zpe_path)
+        assert len(rows) == 3 * 2 * 2  # 12 rows
+        replicas = {r["replica"] for r in rows}
+        assert replicas == {0, 1, 2}
+
+
+# ---------------------------------------------------------------------------
+# Tests for load_dipole_out (dipole trajectory reader)
+# ---------------------------------------------------------------------------
+
+class TestLoadDipoleOut:
+    """Tests for the dipole.out reader supporting single and batch formats."""
+
+    def test_single_trajectory_format(self, tmp_path):
+        """Single-trajectory format: step dx dy dz."""
+        path = tmp_path / "dipole.out"
+        path.write_text(
+            "0 1.0 2.0 3.0\n"
+            "1 4.0 5.0 6.0\n"
+            "2 7.0 8.0 9.0\n",
+            encoding="utf-8",
+        )
+        result = mod_lsc.load_dipole_out(path)
+        assert 0 in result
+        assert len(result[0]) == 3
+        assert result[0][0].step == 0
+        np.testing.assert_array_equal(result[0][0].dipole, [1.0, 2.0, 3.0])
+        assert result[0][2].step == 2
+        np.testing.assert_array_equal(result[0][2].dipole, [7.0, 8.0, 9.0])
+
+    def test_batch_format_with_replica(self, tmp_path):
+        """Batch format: step replica dx dy dz."""
+        path = tmp_path / "dipole.out"
+        path.write_text(
+            "0 0 1.0 2.0 3.0\n"
+            "0 1 4.0 5.0 6.0\n"
+            "1 0 7.0 8.0 9.0\n"
+            "1 1 10.0 11.0 12.0\n",
+            encoding="utf-8",
+        )
+        result = mod_lsc.load_dipole_out(path)
+        assert set(result.keys()) == {0, 1}
+        assert len(result[0]) == 2
+        assert len(result[1]) == 2
+        assert result[0][0].step == 0
+        np.testing.assert_array_equal(result[0][0].dipole, [1.0, 2.0, 3.0])
+        assert result[1][1].step == 1
+        np.testing.assert_array_equal(result[1][1].dipole, [10.0, 11.0, 12.0])
+
+    def test_frames_sorted_by_step(self, tmp_path):
+        """Frames should be sorted by step within each replica."""
+        path = tmp_path / "dipole.out"
+        path.write_text(
+            "2 1.0 0.0 0.0\n"
+            "0 2.0 0.0 0.0\n"
+            "1 3.0 0.0 0.0\n",
+            encoding="utf-8",
+        )
+        result = mod_lsc.load_dipole_out(path)
+        steps = [f.step for f in result[0]]
+        assert steps == [0, 1, 2]
+
+    def test_nonexistent_file_returns_empty(self, tmp_path):
+        """Missing file should return empty dict."""
+        result = mod_lsc.load_dipole_out(tmp_path / "no_such_file.out")
+        assert result == {}
+
+    def test_empty_lines_skipped(self, tmp_path):
+        """Empty lines and whitespace should be skipped."""
+        path = tmp_path / "dipole.out"
+        path.write_text(
+            "\n"
+            "0 1.0 2.0 3.0\n"
+            "\n"
+            "1 4.0 5.0 6.0\n"
+            "\n",
+            encoding="utf-8",
+        )
+        result = mod_lsc.load_dipole_out(path)
+        assert len(result[0]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests for multi-operator correlation (P1-5)
+# ---------------------------------------------------------------------------
+
+class TestMultiOperatorCorrelation:
+    """Tests for the multi-operator correlation support in lsc_ivr.py main()."""
+
+    def _write_config(self, path, correlations):
+        """Write a JSON config file."""
+        import json
+        with path.open("w") as f:
+            json.dump({"correlations": correlations}, f)
+
+    def test_multi_correlation_config_parses(self, tmp_path):
+        """Multi-correlation config should produce multiple output files."""
+        import json
+        # Create a simple 2-replica trajectory with enough frames for FFT
+        traj_path = tmp_path / "traj.xyz"
+        with traj_path.open("w") as f:
+            # 2 replicas, 8 frames each (need >= 4 for FFT)
+            for rid in range(2):
+                for step in range(8):
+                    write_extxyz_frame(
+                        f,
+                        positions=np.array([[0.0 + step * 0.1 * rid, 0.0, 0.0]]),
+                        velocities=np.array([[1.0 * rid, 0.0, 0.0]]),
+                        masses=np.array([1.008]),
+                        symbols=["H"],
+                        replica=rid,
+                        step=step,
+                        time_fs=step * 0.5,
+                        seed=rid,
+                    )
+
+        # Summary with equal weights
+        summary_path = tmp_path / "summary.csv"
+        summary_path.write_text(
+            "replica,seed,wigner_weight,log_wigner_weight\n"
+            "0,0,1.0,0.0\n"
+            "1,1,1.0,0.0\n",
+            encoding="utf-8",
+        )
+
+        # Multi-correlation config: position-x autocorr + velocity-x autocorr
+        config_path = tmp_path / "config.json"
+        self._write_config(config_path, [
+            {
+                "name": "pos_x",
+                "operator_A": {"name": "position", "params": {"atom": 0, "axis": 0}},
+                "operator_B": {"name": "position", "params": {"atom": 0, "axis": 0}},
+            },
+            {
+                "name": "vel_x",
+                "operator_A": {"name": "velocity", "params": {"atom": 0, "axis": 0}},
+                "operator_B": {"name": "velocity", "params": {"atom": 0, "axis": 0}},
+            },
+        ])
+
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+        corr_output = out_dir / "correlation.csv"
+        fft_output = out_dir / "spectrum.csv"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(LSC_IVR_PATH),
+                "--trajectory", str(traj_path),
+                "--summary", str(summary_path),
+                "--config", str(config_path),
+                "--output", str(corr_output),
+                "--fft", str(fft_output),
+                "--max-lag", "3.5",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+        # With multiple correlations, files get suffixed with corr_name
+        assert (out_dir / "correlation_pos_x.csv").is_file()
+        assert (out_dir / "correlation_vel_x.csv").is_file()
+        assert (out_dir / "spectrum_pos_x.csv").is_file()
+        assert (out_dir / "spectrum_vel_x.csv").is_file()
+
+    def test_legacy_single_operator_config_still_works(self, tmp_path):
+        """Legacy single-operator config should produce unsuffixed output."""
+        import json
+        traj_path = tmp_path / "traj.xyz"
+        with traj_path.open("w") as f:
+            for rid in range(2):
+                for step in range(8):
+                    write_extxyz_frame(
+                        f,
+                        positions=np.array([[0.0 + step * 0.1 * rid, 0.0, 0.0]]),
+                        velocities=np.array([[1.0, 0.0, 0.0]]),
+                        masses=np.array([1.008]),
+                        symbols=["H"],
+                        replica=rid,
+                        step=step,
+                        time_fs=step * 0.5,
+                        seed=rid,
+                    )
+
+        summary_path = tmp_path / "summary.csv"
+        summary_path.write_text(
+            "replica,seed,wigner_weight,log_wigner_weight\n"
+            "0,0,1.0,0.0\n1,1,1.0,0.0\n",
+            encoding="utf-8",
+        )
+
+        config_path = tmp_path / "config.json"
+        with config_path.open("w") as f:
+            json.dump({
+                "operator_A": {"name": "position", "params": {"atom": 0, "axis": 0}},
+                "operator_B": {"name": "position", "params": {"atom": 0, "axis": 0}},
+            }, f)
+
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+        corr_output = out_dir / "correlation.csv"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(LSC_IVR_PATH),
+                "--trajectory", str(traj_path),
+                "--summary", str(summary_path),
+                "--config", str(config_path),
+                "--output", str(corr_output),
+                "--max-lag", "1.0",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        # With single correlation, no suffix is added
+        assert corr_output.is_file()
+        assert not (out_dir / "correlation_default.csv").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Tests for convergence diagnostics
+# ---------------------------------------------------------------------------
+
+class TestConvergenceDiagnostics:
+    """Tests for compute_convergence_diagnostics."""
+
+    def test_basic_diagnostics(self, tmp_path):
+        """Convergence diagnostics should compute N_eff and weight stats."""
+        # Build simple replica trajectories
+        replica_trajs = {}
+        for rid in range(4):
+            frames = []
+            for step in range(2):
+                frame = mod_analyzer.Frame(
+                    symbols=["H"],
+                    positions=np.array([[0.0, 0.0, 0.0]]),
+                    masses=np.array([1.008]),
+                    velocities=np.array([[1.0, 0.0, 0.0]]),
+                    lattice=None,
+                    pbc=np.array([False, False, False]),
+                    time_fs=step * 0.5,
+                    metadata={"replica": rid, "step": step},
+                )
+                frames.append(frame)
+            replica_trajs[rid] = frames
+
+        weights = {0: 1.0, 1: 1.0, 2: 0.5, 3: 0.5}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+        diag = mod_lsc.compute_convergence_diagnostics(replica_trajs, weights, op, op)
+
+        assert diag.n_replicas == 4
+        assert diag.n_effective == pytest.approx(3.6, abs=0.01)
+        assert diag.weight_max == 1.0
+        assert diag.weight_min == 0.5
+
+    def test_all_zero_weights_raises(self, tmp_path):
+        """All-zero weights should raise ValueError."""
+        replica_trajs = {0: [mod_analyzer.Frame(
+            symbols=["H"],
+            positions=np.array([[0.0, 0.0, 0.0]]),
+            masses=np.array([1.008]),
+            velocities=np.array([[0.0, 0.0, 0.0]]),
+            lattice=None,
+            pbc=np.array([False, False, False]),
+            time_fs=0.0,
+            metadata={"replica": 0, "step": 0},
+        )]}
+        weights = {0: 0.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+        with pytest.raises(ValueError, match="All replica weights are zero"):
+            mod_lsc.compute_convergence_diagnostics(replica_trajs, weights, op, op)
+
+    def test_diagnostics_csv_written(self, tmp_path):
+        """write_diagnostics_csv should produce a valid CSV."""
+        replica_trajs = {}
+        for rid in range(3):
+            frames = []
+            for step in range(2):
+                frame = mod_analyzer.Frame(
+                    symbols=["H"],
+                    positions=np.array([[float(step), 0.0, 0.0]]),
+                    masses=np.array([1.008]),
+                    velocities=np.array([[1.0, 0.0, 0.0]]),
+                    lattice=None,
+                    pbc=np.array([False, False, False]),
+                    time_fs=step * 0.5,
+                    metadata={"replica": rid, "step": step},
+                )
+                frames.append(frame)
+            replica_trajs[rid] = frames
+
+        weights = {0: 1.0, 1: 1.0, 2: 1.0}
+        op = mod_lsc.make_operator({"name": "position", "params": {"atom": 0, "axis": 0}})
+        diag = mod_lsc.compute_convergence_diagnostics(replica_trajs, weights, op, op)
+
+        csv_path = tmp_path / "diag.csv"
+        mod_lsc.write_diagnostics_csv(csv_path, diag)
+        assert csv_path.is_file()
+
+        with csv_path.open() as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        assert any(r[0] == "n_replicas" for r in rows)
+        assert any(r[0] == "n_effective" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Tests for weight histogram
+# ---------------------------------------------------------------------------
+
+class TestWeightHistogram:
+    """Tests for write_weight_histogram."""
+
+    def test_histogram_written(self, tmp_path):
+        """write_weight_histogram should produce a valid CSV."""
+        weights = {i: float(i + 1) for i in range(10)}
+        path = tmp_path / "hist.csv"
+        mod_lsc.write_weight_histogram(path, weights, n_bins=5)
+        assert path.is_file()
+
+        with path.open() as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        assert rows[0] == ["bin_left", "bin_right", "count"]
+        total = sum(int(r[2]) for r in rows[1:])
+        assert total == 10
+
+    def test_histogram_empty_weights_no_file(self, tmp_path):
+        """All-zero weights should produce no file."""
+        weights = {0: 0.0, 1: 0.0}
+        path = tmp_path / "hist.csv"
+        mod_lsc.write_weight_histogram(path, weights)
+        assert not path.is_file()

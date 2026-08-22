@@ -1,0 +1,10 @@
+potential    /mnt/c/users/admin/documents/github/gpumd/potentials/nep/Si_2022_NEP4_3body.txt
+time_step    1
+velocity     300
+ensemble     pimd 8 300 300 100
+dump_thermo  1000
+run          500000
+ensemble     rpmd 8
+compute_hac  20 50000 10
+dump_thermo  1000
+run          10000000

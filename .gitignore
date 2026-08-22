@@ -30,3 +30,25 @@ docs/nep_multi_pes_analysis.md
 docs/delta_ml_dpem_detailed.md
 docs/nep_multi_pes_additional_approaches.md
 tools/qct/LSC_IVR_CODE_REVIEW.md
+
+# QCT/LSC-IVR test artifacts (generated outputs)
+tests/gpumd/qct_nep89_si/**/gpumd.log
+tests/gpumd/qct_nep89_si/**/hac.out
+tests/gpumd/qct_nep89_si/**/thermo.out
+tests/gpumd/qct_nep89_si/**/neighbor.out
+tests/gpumd/qct_nep89_si/**/qct_eigenvector.out
+tests/gpumd/qct_nep89_si/**/qct_hessian.out
+tests/gpumd/qct_nep89_si/**/qct_initial.out
+tests/gpumd/qct_nep89_si/**/qct_initial.xyz
+tests/gpumd/qct_nep89_si/**/qct_initial_summary.csv
+tests/gpumd/qct_nep89_si/**/qct_stationary.xyz
+tests/gpumd/qct_nep89_si/**/qct_zpe.csv
+tests/gpumd/qct_nep89_si/**/qct_trajectory.xyz
+tests/gpumd/qct_nep89_si/**/qct_thermo.csv
+tests/gpumd/qct_nep89_si/**/dos.out
+tests/gpumd/qct_nep89_si/**/dipole.out
+tests/gpumd/si_nep4_12x12x12/**/gpumd.log
+tests/gpumd/si_nep4_12x12x12/**/hac.out
+tests/gpumd/si_nep4_12x12x12/**/thermo.out
+tests/gpumd/qct_validation/**/gpumd.log
+time.txt

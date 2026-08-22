@@ -117,10 +117,12 @@ ensemble qct wigner temperature T [key-value pairs...]
 | `seed` | int | random | Random seed for reproducible sampling |
 | `replicas` | int | 1 | Number of independent replicas (trajectories) |
 | `hessian_displacement` | float (Å) | 0.001 | Finite-difference displacement for automatic Hessian |
-| `anharmonic_reweighting` | yes/no | yes | Compute anharmonic reweighting weights |
+| `hessian_progress` | yes/no | yes | Print automatic Hessian phase progress |
+| `hessian_progress_interval` | int | 0 (adaptive) | About 12 finite-difference updates; first and last columns are always reported |
+| `anharmonic_reweighting` | yes/no | yes for T>0 | Compute finite-temperature reweighting weights; must be `no` at T=0 |
 | `stationary_point` | auto/minimum/saddle | auto | Stationary point type (Wigner requires minimum or auto) |
 | `min_frequency` | float (THz) | 0.001 | Minimum frequency for a mode to be active |
-| `exclude_lowest` | int | 0 | Exclude N lowest modes (only with eigenvector file) |
+| `exclude_lowest` | int | 6 isolated / 3 PBC | Exclude N lowest modes; explicit values override the boundary-aware default |
 | `eigenvector` | file path | — | Use external eigenvector file instead of auto Hessian |
 | `modes` | file path | — | Use external qct_modes.in file |
 | `zpe` | yes/no | yes | ZPE flag. **Must be yes for Wigner** (ZPE is intrinsic). |
@@ -191,7 +193,8 @@ numerical stability (see BUG-3 fix).
 
 ### Correlation function
 
-The LSC-IVR Kubo-transformed correlation function is:
+The default output is a Wigner-LSC correlation function, not an automatically
+Kubo-transformed estimator:
 
 ```
 C_AB(t) = Σ_i w_i · A(0)_i · B(t)_i  /  Σ_i w_i
@@ -200,12 +203,51 @@ C_AB(t) = Σ_i w_i · A(0)_i · B(t)_i  /  Σ_i w_i
 The standard error uses the importance-sampling (ratio estimator) variance:
 
 ```
-Var[Ĉ(t)] ≈ (1/N) · Σ_i [ w_i² · (f_i - Ĉ)² ] / (Σ_i w_i)²
+Var[Ĉ(t)] ≈ Σ_i [ w_i² · (f_i - Ĉ)² ] / (Σ_i w_i)²
 ```
 
 where `f_i = A(0)_i · B(t)_i` and `Ĉ` is the estimated mean.  This requires a
 two-pass computation: first compute `Ĉ`, then compute the weighted variance of
 residuals.
+
+### Multi-operator correlations
+
+For computing multiple correlation functions from a single trajectory pass,
+use the `correlations` key in the config JSON:
+
+```json
+{
+  "correlations": [
+    {
+      "name": "pos_x",
+      "operator_A": {"name": "position", "params": {"atom": 0, "axis": 0}},
+      "operator_B": {"name": "position", "params": {"atom": 0, "axis": 0}}
+    },
+    {
+      "name": "vel_x",
+      "operator_A": {"name": "velocity", "params": {"atom": 0, "axis": 0}},
+      "operator_B": {"name": "velocity", "params": {"atom": 0, "axis": 0}}
+    },
+    {
+      "name": "bond_01",
+      "operator_A": {"name": "bond_length", "params": {"atom1": 0, "atom2": 1}},
+      "operator_B": {"name": "bond_length", "params": {"atom1": 0, "atom2": 1}}
+    }
+  ]
+}
+```
+
+When multiple correlations are specified, output files are suffixed with the
+correlation name:
+
+* `correlation_pos_x.csv`, `correlation_vel_x.csv`, `correlation_bond_01.csv`
+* `spectrum_pos_x.csv`, `spectrum_vel_x.csv`, `spectrum_bond_01.csv`
+
+The trajectory is read only once; all correlations are computed in a single
+pass for efficiency.
+
+Legacy single-operator configs (with `operator_A` / `operator_B` at the top
+level) remain backward-compatible and produce unsuffixed output files.
 
 ## Output Files
 
@@ -294,7 +336,7 @@ Columns: `time_fs`, `c_ab`, `c_ab_normalized`, `std_error`, `n_samples`
 
 ### Spectrum output CSV
 
-Columns: `frequency_THz`, `wavenumber_cm_inv`, `intensity`
+Columns: `frequency_THz`, `wavenumber_cm_inv`, `power_spectrum`
 
 The FFT is computed on the normalized correlation function with the chosen
 window function applied.
@@ -357,6 +399,48 @@ At T=0, `coth → 1` and each mode is sampled from the ground-state Wigner
 distribution.  Anharmonic reweighting is disabled (all weights = 1.0) since
 β → ∞ makes the reweighting weight ill-defined for the ground state.
 
+
+### Example 4: NVT Equilibration → LSC-IVR Two-Stage Workflow
+
+For condensed-phase or large molecular systems, it is often desirable to first
+equilibrate at the target temperature using NVT dynamics, then switch to
+LSC-IVR sampling + NVE production.  GPUMD's native multi-`run` block mechanism
+supports this seamlessly: each `ensemble` keyword creates a new ensemble
+object, so the LSC-IVR ensemble will correctly reinitialize for the production
+stage.
+
+```text
+# Stage 1: NVT equilibration (25 ps at 0.5 fs/step)
+ensemble     nvt_lan 300 100
+dump_thermo  100
+run          50000
+
+# Stage 2: LSC-IVR Wigner sampling + NVE production
+ensemble     lsc_ivr 300 seed 12345 replicas 1 \
+    hessian_displacement 0.001 anharmonic_reweighting yes
+compute_hac  20 500 10
+dump_thermo  100
+run          1000000
+```
+
+Key points:
+
+* **No code change needed**: GPUMD's `run` block mechanism natively supports
+  multiple ensemble types in sequence.  The LSC-IVR ensemble has an
+  `initialized_` guard that ensures proper reinitialization.
+* **Temperature consistency**: The NVT temperature (300 K in the example) should
+  match the LSC-IVR Wigner sampling temperature for consistency.
+* **Hessian computation**: The Hessian is computed at the beginning of the
+  LSC-IVR stage, using the geometry at the end of the NVT equilibration.
+* **`replicas 1`**: For multi-GPU parallelism, use `replicas 1` per process and
+  launch multiple processes via `run_multigpu.py`.
+* **HAC in production**: `compute_hac` accumulates the heat current
+  autocorrelation during the LSC-IVR stage, which is post-processed with
+  Wigner-weighted merging via `run_multigpu.py --workflow hac`.
+
+This two-stage workflow is the recommended approach for condensed-phase thermal
+conductivity calculations with LSC-IVR quantum corrections.
+
 ## Running on HPC (Slurm)
 
 Use a batch script instead of `srun` for interactive submission:
@@ -390,6 +474,50 @@ python3 /path/to/tools/qct/lsc_ivr.py \
 Reference batch scripts are in:
 * `tests/gpumd/qct_nep89_oh/lsc_ivr.batch` (OH radical)
 * `tests/gpumd/qct_nep89_ethanol/lsc_ivr.batch` (ethanol)
+
+### Supported workflows for `run_multigpu.py`
+
+`run_multigpu.py --workflow` supports the following modes:
+
+| Workflow | Detection keyword | Merged output | Description |
+|----------|-------------------|---------------|-------------|
+| `hac` | `compute_hac` | `hac.out` (Wigner-weighted) | Green-Kubo thermal conductivity |
+| `hnemd` | `compute_hnemd` | `thermo.out` (Wigner-weighted) | NEMD thermal conductivity |
+| `dos` | `compute_dos` | `dos.out` (Wigner-weighted) | Phonon density of states |
+| `ir` | `dump_dipole` | `dipole.out` (Wigner-weighted) | IR spectrum / dipole autocorrelation |
+| `trajectory` | `dump_qct` | `qct_trajectory.xyz` + CSVs | Trajectory + ZPE monitoring |
+| `auto` | (any of above) | (inferred) | Automatically detect from `run.in` |
+
+### Temperature sweep mode
+
+For systematic temperature dependence studies, use `--temperature-sweep`:
+
+```bash
+python run_multigpu.py --template run_dir --gpumd ~/gpumd \
+    --temperature-sweep 100,300,800 \
+    --replicas-per-temperature 5 \
+    --num-gpus 4 \
+    --output sweep_output/
+```
+
+The template `run.in` must contain `__TEMPERATURE__` as a placeholder.
+This creates `T_100K/`, `T_300K/`, `T_800K/` subdirectories, each with
+independent multi-GPU replica jobs.  A `temperature_sweep_index.json` file
+is written to the output directory with metadata.
+
+### Checkpoint/resume
+
+Long production runs can be resumed with `--resume`:
+
+```bash
+python run_multigpu.py --template run_dir --gpumd ~/gpumd \
+    --total-replicas 5 --workflow hac --resume \
+    --output merged_output/
+```
+
+Completed replicas (verified by manifest status, required artifacts, and the
+GPUMD completion marker in `gpumd.log`) are skipped.  Incomplete replicas are
+deleted and re-run from scratch.
 
 ## Physical Constants
 

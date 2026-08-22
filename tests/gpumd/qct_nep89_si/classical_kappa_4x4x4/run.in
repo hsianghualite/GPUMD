@@ -1,0 +1,18 @@
+# Classical thermal conductivity: Si diamond 4x4x4 (512 atoms), NEP89, 300K
+# Goal: converge classical kappa for comparison with LSC-IVR
+#
+# Phase 1: NVT equilibration (100 ps)
+potential    ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step    0.5
+velocity     300
+ensemble     nvt_ber 300 300 100
+dump_thermo  100
+run          200000
+
+# Phase 2: NVE production with HAC (500 ps)
+# compute_hac: sample_interval=10(5fs), Nc=8000(40ps correlation), Nd=10(blocks)
+# samples_per_block = 100000/10 = 10000 > 8000 ✓
+ensemble     nve
+compute_hac  10 8000 10
+dump_thermo  100
+run          1000000

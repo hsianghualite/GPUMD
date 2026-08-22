@@ -1,0 +1,13 @@
+# RPMD thermal conductivity: Si diamond 3x3x3 (216 atoms), NEP89, 300K, 8 beads
+# Phase 1: PIMD NVT equilibration with 8 beads (Langevin thermostat)
+potential    ../../../../potentials/nep/nep89_20250409/nep89_20250409.txt
+time_step    0.5
+velocity     300
+ensemble     pimd 8 300 300 100
+dump_thermo  100
+run          50000
+# Phase 2: RPMD NVE production with HAC (no thermostat = NVE for ring polymer)
+ensemble     rpmd 8
+compute_hac  20 500 10
+dump_thermo  100
+run          200000

@@ -44,5 +44,20 @@ and
 Note that the cross term introduced in [Fan2017]_ has been evenly attributed to the in-plane and out-of-plane components.
 This has been justified in [Fan2019]_.
 
+For a native QCT/LSC-IVR batch with ``replicas > 1``, GPUMD first computes one
+HAC curve per replica and then combines those curves with the normalized
+Wigner weights. It does not correlate the summed heat currents of different
+replicas. The weighted batch audit is written to ``hac_replica.out`` and the
+weights used for the reduction are written to ``hac_reweighting.csv``.
+
+``hac_replica.out`` has 12 whitespace-separated columns: the zero-based
+replica index followed by the same time, HAC, and RTC columns as ``hac.out``.
+``hac_reweighting.csv`` contains ``replica``, ``seed``,
+``log_wigner_weight``, and ``normalized_weight``. For ``replicas = 1``, the
+single-trajectory ``hac.out`` remains a conditional HAC curve; its weight must
+be normalized together with other independent trajectories, for example by
+``tools/qct/run_multigpu.py``. Multiplying a single curve by its raw weight is
+not a normalized reweighted estimator.
+
 Only the potential part of the heat current is included.
 If the convective part of the heat current is important in your system, you can use the :ref:`compute keyword <kw_compute>` to calculate and output the heat current data and post-process it by yourself.

@@ -31,7 +31,7 @@ Example: quantum-corrected thermal conductivity of a Si crystal::
 
 Example: ground-state Wigner for a molecular system without PBC::
 
-    ensemble lsc_ivr 0 seed 42 replicas 64 hessian_displacement 0.001 anharmonic_reweighting yes
+    ensemble lsc_ivr 0 seed 42 replicas 64 hessian_displacement 0.001 anharmonic_reweighting no
 
 Parameters
 ----------
@@ -53,33 +53,40 @@ All parameters accepted by ``ensemble qct wigner`` are also accepted by
 ``hessian_displacement``
   Finite-difference displacement for the automatic Hessian (default: 0.001 Å).
 
+``hessian_progress`` / ``hessian_progress_interval``
+  Control automatic Hessian progress output. Progress is enabled by default;
+  interval ``0`` selects about 12 adaptive updates; the first and last columns
+  are always reported.
+  CUDA periodic systems use the device finite-difference Hessian path.
+
 ``min_frequency``
   Minimum active-mode frequency in THz (default: 0.001).  Modes below this
   threshold are treated as rigid translations/rotations.
 
 ``anharmonic_reweighting``
-  ``yes`` (default) or ``no``.  When enabled, each replica receives an
-  importance-sampling weight :math:`w_i = \\exp(-\\beta \\Delta V)`.
+  ``yes`` (default for ``T > 0``) or ``no``.  When enabled, each replica
+  receives an importance-sampling weight :math:`w_i = \\exp(-\\beta \\Delta V)`.
+  At ``T = 0`` this must be ``no`` because the Boltzmann reweighting limit is
+  undefined.
 
 ``exclude_lowest``
   Number of lowest-frequency modes to exclude as rigid (default: 6 for
-  molecular systems, automatically adjusted for periodic systems).
+  isolated non-linear molecules, 3 for periodic cells; explicit values
+  override the default).
 
 Periodic Boundary Conditions
 -----------------------------
 
-Unlike ``ensemble qct wigner``, which requires ``pbc=F F F`` when
-``replicas > 1``, the :attr:`lsc_ivr` ensemble is designed for periodic
-systems from the ground up:
+The :attr:`lsc_ivr` ensemble supports periodic systems for single-replica
+propagation:
 
 - **``replicas 1`` with PBC**: Fully supported.  The system is propagated
   as a single NVE trajectory with quantum-corrected Wigner initial
   conditions.  This is the recommended workflow for condensed-phase
   thermal conductivity calculations (e.g., with ``compute_hac``).
-- **``replicas > 1`` with PBC**: Not yet supported.  Batch expansion
-  would require replicating the supercell box, which is not implemented.
-  For multiple independent samples of a periodic system, run separate
-  GPUMD jobs with different seeds.
+- **``replicas > 1`` with PBC**: Temporarily disabled.  The native batch
+  neighbor path does not yet implement a validated replica-isolated periodic
+  image policy; use ``replicas 1`` or separate processes.
 
 Relationship to QCT
 -------------------

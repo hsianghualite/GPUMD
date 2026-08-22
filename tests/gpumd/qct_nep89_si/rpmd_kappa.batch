@@ -1,0 +1,131 @@
+#!/bin/bash
+#SBATCH --job-name=rpmd-kappa
+#SBATCH --partition=16V100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gpus-per-node=1
+#SBATCH --qos=flood-1o2gpu
+#SBATCH --time=04:00:00
+
+source /etc/profile.d/lmod.sh
+module load cuda/12.4.1
+export OMP_NUM_THREADS=1
+source /opt/sai_config/mps_mapping.d/${SLURM_JOB_PARTITION}.bash
+
+REVIEW_ROOT="$HOME/workdir_sinano-fanzhaochuan/yishangzhao/gpumd-qct-review"
+GPUMD_BIN="${REVIEW_ROOT}/src/gpumd"
+TEST_BASE="${REVIEW_ROOT}/tests/gpumd/qct_nep89_si"
+
+echo "============================================"
+echo "RPMD Thermal Conductivity Test - $(date)"
+echo "System: Si diamond 3x3x3 (216 atoms), NEP89"
+echo "Beads:  8"
+echo "Binary: ${GPUMD_BIN}"
+echo "Node:   $(hostname)"
+echo "============================================"
+
+TEST_DIR="${TEST_BASE}/rpmd_8beads"
+cd "${TEST_DIR}" || { echo "FAIL: cannot cd to ${TEST_DIR}"; exit 1; }
+
+rm -f gpumd.log thermo.out hac.out stress.out neighbor.out
+
+echo "--- GPU info ---"
+nvidia-smi -L 2>&1 | head -2
+echo ""
+echo "--- run.in ---"
+cat run.in
+echo ""
+echo "--- model.xyz (header) ---"
+head -2 model.xyz
+
+echo ""
+echo "=== Running GPUMD ==="
+"${GPUMD_BIN}" > gpumd.log 2>&1
+rc=$?
+
+if [ ${rc} -ne 0 ]; then
+    echo "FAIL: gpumd exited with code ${rc}"
+    echo "--- last 100 lines of gpumd.log ---"
+    tail -100 gpumd.log 2>/dev/null
+    exit 1
+fi
+echo "GPUMD exit code: ${rc}"
+
+echo ""
+echo "--- gpumd.log (key lines) ---"
+grep -E "Use |PIMD|RPMD|bead|temperature|Run |HAC|heat|periodic|PBC|thermostat|Langevin|NVE|NVT" gpumd.log 2>/dev/null | head -40
+
+echo ""
+echo "--- Output files ---"
+ls -la
+
+# Check HAC output
+if [ -f "hac.out" ]; then
+    echo ""
+    echo "--- hac.out (first 5 lines) ---"
+    head -5 hac.out
+    echo "..."
+    echo "--- hac.out (last 5 lines) ---"
+    tail -5 hac.out
+
+    echo ""
+    echo "--- Thermal conductivity analysis ---"
+    python3 -c "
+import numpy as np
+data = np.loadtxt('hac.out')
+ncols = data.shape[1]
+t = data[:, 0]
+print(f'HAC data: {data.shape[0]} rows, {ncols} columns')
+print(f'Time range: {t[0]:.4f} - {t[-1]:.4f} ps')
+# hac.out format: time(ps), hac_xi, hac_xo, hac_yi, hac_yo, hac_z,
+#                 rtc_xi, rtc_xo, rtc_yi, rtc_yo, rtc_z (11 columns)
+if ncols == 11:
+    kx = data[:, 6] + data[:, 7]
+    ky = data[:, 8] + data[:, 9]
+    kz = data[:, 10]
+    kappa_avg = (kx + ky + kz) / 3
+    print(f'kappa_x at end: {kx[-1]:.4f} W/m/K')
+    print(f'kappa_y at end: {ky[-1]:.4f} W/m/K')
+    print(f'kappa_z at end: {kz[-1]:.4f} W/m/K')
+    print(f'kappa_avg at end: {kappa_avg[-1]:.4f} W/m/K')
+    # Check for plateau
+    if len(kappa_avg) > 10:
+        last_quarter = kappa_avg[-len(kappa_avg)//4:]
+        print(f'kappa_avg (last quarter mean): {np.mean(last_quarter):.4f} W/m/K')
+        print(f'kappa_avg (last quarter std):  {np.std(last_quarter):.4f} W/m/K')
+else:
+    print('Unexpected column count:', ncols)
+    print('Last row:', data[-1, :])
+" 2>&1
+else
+    echo "WARNING: hac.out not found"
+    echo "Checking gpumd.log for errors..."
+    tail -30 gpumd.log
+    exit 1
+fi
+
+# Check thermo output
+if [ -f "thermo.out" ]; then
+    echo ""
+    echo "--- thermo.out analysis ---"
+    python3 -c "
+import numpy as np
+data = np.loadtxt('thermo.out')
+print(f'Thermo data: {data.shape[0]} rows')
+# Columns: temperature, kinetic energy, potential energy, total energy, pressure
+# For PIMD/RPMD, temperature is centroid temperature
+print(f'Phase 1 (PIMD NVT, first 500 rows):')
+print(f'  T range: {data[:500,0].min():.1f} - {data[:500,0].max():.1f} K')
+print(f'  T mean:  {data[:500,0].mean():.1f} K')
+if data.shape[0] > 500:
+    print(f'Phase 2 (RPMD NVE, rows 500+):')
+    print(f'  T range: {data[500:,0].min():.1f} - {data[500:,0].max():.1f} K')
+    print(f'  T mean:  {data[500:,0].mean():.1f} K')
+    print(f'  Energy drift: {data[-1,3] - data[500,3]:.6f} eV')
+" 2>&1
+fi
+
+echo ""
+echo "============================================"
+echo "RPMD kappa test completed - $(date)"
+echo "============================================"

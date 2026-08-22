@@ -1,0 +1,72 @@
+#!/bin/bash
+#SBATCH --job-name=cl-k-hac
+#SBATCH --partition=16V100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gpus-per-node=1
+#SBATCH --qos=flood-1o2gpu
+#SBATCH --time=08:00:00
+
+source /etc/profile.d/lmod.sh
+module load cuda/12.4.1
+export OMP_NUM_THREADS=1
+source /opt/sai_config/mps_mapping.d/${SLURM_JOB_PARTITION}.bash
+
+REVIEW_ROOT="$HOME/workdir_sinano-fanzhaochuan/yishangzhao/gpumd-qct-review"
+GPUMD_BIN="${REVIEW_ROOT}/src/gpumd"
+TEST_DIR="${REVIEW_ROOT}/tests/gpumd/qct_nep89_si/classical_kappa_4x4x4_nep4_hac"
+
+echo "============================================"
+echo "Classical Thermal Conductivity (NEP4 3body, HAC 12x12x12 params) - $(date)"
+echo "System: Si diamond 4x4x4 (512 atoms)"
+echo "NPT equil: 500 ps, NVE prod: 10 ns"
+echo "HAC: sample=20(20fs), Nc=50000(1ns correlation), Nd=10"
+echo "============================================"
+
+cd "${TEST_DIR}" || { echo "FAIL: cannot cd to ${TEST_DIR}"; exit 1; }
+
+rm -f gpumd.log thermo.out hac.out stress.out neighbor.out
+
+echo "--- run.in ---"
+cat run.in
+echo ""
+echo "=== Running GPUMD ==="
+"${GPUMD_BIN}" > gpumd.log 2>&1
+rc=$?
+
+if [ ${rc} -ne 0 ]; then
+    echo "FAIL: gpumd exited with code ${rc}"
+    tail -100 gpumd.log 2>/dev/null
+    exit 1
+fi
+echo "GPUMD exit code: ${rc}"
+echo ""
+echo "=== Output files ==="
+ls -la
+
+if [ -f "hac.out" ]; then
+    python3 -c "
+import numpy as np
+data = np.loadtxt('hac.out')
+ncols = data.shape[0]
+t = data[:, 0]
+kx = data[:, 6] + data[:, 7]
+ky = data[:, 8] + data[:, 9]
+kz = data[:, 10]
+kappa_avg = (kx + ky + kz) / 3.0
+print(f'HAC: {ncols} rows, corr window: {t[-1]:.1f} ps')
+print(f'kappa_x = {kx[-1]:.4f} W/m/K')
+print(f'kappa_y = {ky[-1]:.4f} W/m/K')
+print(f'kappa_z = {kz[-1]:.4f} W/m/K')
+print(f'kappa_avg = {kappa_avg[-1]:.4f} W/m/K')
+print()
+print('Convergence:')
+for frac in [0.25, 0.5, 0.75, 1.0]:
+    idx = int(ncols * frac) - 1
+    print(f'  {t[idx]:.1f} ps: {kappa_avg[idx]:.4f} W/m/K')
+last_q = kappa_avg[int(ncols*0.75):]
+print(f'  Last 25%: {np.mean(last_q):.4f} +/- {np.std(last_q):.4f} W/m/K')
+" 2>&1
+fi
+echo ""
+echo "Completed - $(date)"

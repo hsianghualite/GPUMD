@@ -20,8 +20,17 @@ echo "Directory: $(pwd)"
 GPUMD=${GPUMD:-../../../../src/gpumd}
 echo "Using GPUMD: $GPUMD"
 
-# Run the LSC-IVR ensemble with periodic boundary conditions
-$GPUMD < run.in
+# Run the LSC-IVR ensemble with periodic boundary conditions. The wrapper
+# handles WSL's driver bridge and removes stale container GPU mappings.
+WRAPPER="${REVIEW_ROOT:-../../../../}/tools/qct/run_wsl_cuda.sh"
+if [[ -x "$WRAPPER" ]]; then
+  "$WRAPPER" "$GPUMD" < run.in
+else
+  env -u CUDA_VISIBLE_DEVICES \
+    -u NVIDIA_VISIBLE_DEVICES \
+    LD_LIBRARY_PATH="/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}" \
+    "$GPUMD" < run.in
+fi
 
 echo "=== Done ==="
 date

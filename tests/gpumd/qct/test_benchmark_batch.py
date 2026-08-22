@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(
@@ -40,3 +42,19 @@ def test_recommend_ignores_failed_or_memory_unsafe_batches():
     recommended, peak = BENCHMARK.recommend_candidate(rows, 0.95)
     assert peak == recommended
     assert recommended["replicas"] == 1024
+
+
+def test_recommend_rejects_unknown_memory_status():
+    rows = [benchmark_row(1024, 4.0e6, memory_safe="unknown")]
+    with pytest.raises(ValueError, match="No successful and memory-safe"):
+        BENCHMARK.recommend_candidate(rows)
+
+
+def test_run_one_fake_executable_uses_fallback_and_cleans_workspace(tmp_path):
+    (tmp_path / "run.in").write_text("ensemble qct replicas 1\nrun 2\n", encoding="utf-8")
+
+    row = BENCHMARK.run_one(2, tmp_path, "/bin/true", 3, False, None)
+
+    assert row["return_code"] == 0
+    assert row["run_replica_steps_per_s"] > 0
+    assert row["memory_safe_at_85_percent"] == "unknown"

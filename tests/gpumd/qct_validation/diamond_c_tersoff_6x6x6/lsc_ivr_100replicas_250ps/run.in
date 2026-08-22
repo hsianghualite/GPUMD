@@ -1,0 +1,7 @@
+# 100 independent LSC-IVR trajectories for 6x6x6 diamond C, 500 ps each
+potential /home/cuser/gpumd-qct-review/tests/gpumd/diamond_c_tersoff_6x6x6/C_Tersoff_1989.txt
+time_step 0.5
+ensemble lsc_ivr 300 seed 12445 replicas 1 eigenvector /home/cuser/gpumd-qct-review/tests/gpumd/diamond_c_tersoff_6x6x6/lsc_ivr_reweight_yes/qct_eigenvector.out anharmonic_reweighting yes
+compute_hac 5 100000 100
+dump_thermo 100
+run 1000000

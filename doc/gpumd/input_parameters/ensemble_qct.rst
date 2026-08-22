@@ -97,7 +97,9 @@ Parameters
   ``T = 0`` it gives the ground-state Wigner distribution.  ``temperature``
   is required (use ``0`` for ground state).  Anharmonic reweighting weights
   ``w_i = exp(-beta * Delta_V)`` are computed when
-  ``anharmonic_reweighting yes`` is set (the default).  The ``zpe`` keyword
+  ``anharmonic_reweighting yes`` is set (the default for ``T > 0``).  At
+  ``T = 0`` reweighting must be explicitly disabled because the Boltzmann
+  limit is undefined.  The ``zpe`` keyword
   must be ``yes`` (the default) because zero-point energy is intrinsic to the
   Wigner distribution; ``zpe no`` is rejected.  ``stationary_point saddle``
   is also rejected; use ``minimum`` or ``auto``.  If the auto Hessian detects
@@ -107,7 +109,7 @@ Parameters
   See :ref:`lsc_ivr` for the full LSC-IVR user guide.
 
 ``anharmonic_reweighting``
-  ``yes`` (default) or ``no``.  Only relevant for ``wigner`` sampling.  When
+  ``yes`` (default for ``T > 0``) or ``no``.  Only relevant for ``wigner`` sampling.  When
   enabled, each replica receives a weight::
 
       w_i = exp(-beta * [V_real(Q_i) - V_ref - sum_k 0.5 * omega_k^2 * Q_k^2])
@@ -135,13 +137,24 @@ Parameters
   Hessian calculation. The default is ``0.001``. This keyword cannot be used
   with an external ``eigenvector`` or ``modes`` source.
 
+``hessian_progress``
+  ``yes`` (default) or ``no``. Controls progress lines during automatic Hessian
+  finite differences. Periodic CUDA Hessians report the finite-difference,
+  symmetrization, mass-weighting, eigensolve, and mode-reconstruction phases.
+
+``hessian_progress_interval``
+  Positive column interval for progress reporting. The default ``0`` selects
+  an adaptive interval of about 12 updates for the complete Hessian. The first
+  and last columns are always reported; use a positive value when a fixed
+  interval is needed.
+
 ``exclude_lowest``
   Number of modes with the smallest absolute frequencies to exclude from
-  sampling. Their original mode indices are preserved. The default is ``6``,
-  appropriate for the three translations and three rotations of a non-linear
-  isolated molecule. Use ``5`` for a linear molecule. It only applies to an
-  external ``eigenvector`` source; automatic Hessian sampling projects rigid
-  translations and rotations explicitly.
+  sampling. Their original mode indices are preserved. The default is ``6``
+  for an isolated non-linear molecule and ``3`` for a periodic cell. Use ``5``
+  for an isolated linear molecule. An explicit value overrides the default;
+  automatic Hessian sampling derives the rigid basis from the boundary
+  conditions.
 
 ``min_frequency``
   Minimum positive frequency for an active mode, in ordinary GPUMD THz. The
@@ -245,10 +258,23 @@ For a native batch run, use the QCT-specific output::
     dump_qct 100
 
 This writes one frame per replica with ``Replica``, ``Step``, and ``Seed``
-metadata, plus per-replica energies in ``qct_thermo.csv``. Other measurement
-keywords are currently rejected for batch runs because their reductions do
+metadata, plus per-replica energies in ``qct_thermo.csv``. ``compute_hac`` is
+also supported for native non-periodic batches and writes the weighted
+``hac.out`` plus ``hac_replica.out`` and ``hac_reweighting.csv`` audit files.
+Other measurement keywords are still rejected because their reductions do
 not yet have per-replica semantics. The QCT analysis and multi-replica
 aggregation tools are documented in ``tools/qct/README.md``.
+
+To monitor ZPE leakage during a trajectory, add the ``zpe`` keyword::
+
+    dump_qct 100 trajectory qct_trajectory.xyz thermo qct_thermo.csv zpe qct_zpe.csv
+
+This writes ``qct_zpe.csv`` with per-replica, per-mode harmonic modal energies
+projected onto the QCT normal modes at each dump interval. The columns are:
+``replica,step,time_fs,mode,frequency_THz,mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV``.
+The modal energy includes both ``0.5 P^2`` and ``0.5 omega^2 Q^2``; the
+``mode`` column preserves the original mode index.  Monitoring is opt-in and
+the ``zpe_drift_eV`` column tracks drift of this harmonic diagnostic.
 
 .. _lsc_ivr:
 
@@ -296,15 +322,21 @@ Name                 Parameters                     Description
 ``bond_length``      ``atom1``, ``atom2``           Distance between two atoms
 ``kinetic_energy``   ``atom_indices`` (optional)    Total kinetic energy (eV)
 ``point_charge_dipole`` ``axis``, ``charges``       Dipole moment component from point charges
+``nep_dipole``       ``axis``                       NEP dipole from ``dump_dipole`` (requires ``--dipole``)
 ==================== ============================== ============================================
 
+The ``heat_current``, ``heat_current_component``, ``potential_energy``, and
+``total_energy`` operators are not currently registered because their required
+per-replica trajectory fields are not part of the output schema.  Use native
+``compute_hac`` for supported classical heat-current calculations.
+
 The ``--fft`` option produces a spectral density CSV with columns
-``frequency_THz``, ``wavenumber_cm_inv``, and ``intensity``.
+``frequency_THz``, ``wavenumber_cm_inv``, and ``power_spectrum``.
 
 The standard error of the correlation uses the importance-sampling
 (ratio estimator) variance::
 
-    Var[C_hat(t)] = (1/N) * sum_i [w_i^2 * (f_i - C_hat)^2] / (sum_i w_i)^2
+    Var[C_hat(t)] = sum_i [w_i^2 * (f_i - C_hat)^2] / (sum_i w_i)^2
 
 where ``f_i = A(0)_i * B(t)_i`` and ``C_hat`` is the estimated mean.
 
