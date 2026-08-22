@@ -1,5 +1,10 @@
 # LSC-IVR Comprehensive Code Review
 
+> Historical review: the current branch assessment is
+> [QCT and LSC-IVR Comprehensive Code Review V3](QCT_LSC_IVR_CODE_REVIEW_V3.md).
+> This document is retained for traceability, but its status conclusions are
+> superseded by V3.
+
 ## Date: 2026-08-09
 ## Commit: 8b02a2dc
 ## Branch: qct
@@ -209,4 +214,3 @@ correct and follow the existing pattern for `case -13` (QCT).
 2. **[H2]** Update `.cuh` header comment to match actual transformation
 3. **[M1]** Remove unused `#include <string>` and `#include <vector>` from `.cuh`
 4. **[M4]** Fix HAC column analysis in batch script
-

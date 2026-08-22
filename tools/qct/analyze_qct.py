@@ -1255,3 +1255,146 @@ if __name__ == "__main__":
     ) as error:
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# ZPE CSV validation (qct_zpe.csv reader)
+# ---------------------------------------------------------------------------
+
+def load_zpe_csv(path: Path | str) -> list[dict[str, float | int]]:
+    """Load and validate a ``qct_zpe.csv`` file produced by dump_qct.
+
+    .. note::
+        This function is currently scaffolding for future ZPE-drift analysis.
+        It is not yet wired into ``main()`` or ``run_multigpu.py``; the only
+        callers are unit tests in ``tests/gpumd/qct/test_lsc_ivr.py``.
+
+    The CSV has columns::
+
+        replica,step,time_fs,mode,frequency_THz,
+        mode_energy_eV,initial_mode_energy_eV,zpe_drift_eV
+
+    Validation checks performed:
+
+    * All eight required columns are present.
+    * ``replica`` values are non-negative integers.
+    * ``step`` values are monotonically non-decreasing *within* each
+      (replica, mode) group.
+    * The (replica, step, mode) tuple is unique for every row.
+    * All numeric fields are finite (no NaN / inf).
+
+    Parameters
+    ----------
+    path : path to the ``qct_zpe.csv`` file.
+
+    Returns
+    -------
+    list of dicts, one per CSV row, with keys matching the header.
+
+    Raises
+    ------
+    ValueError
+        If the file is missing required columns, contains duplicate
+        (replica, step, mode) entries, non-monotonic steps, or
+        non-finite numeric values.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"ZPE CSV not found: {path}")
+
+    required = {
+        "replica", "step", "time_fs", "mode",
+        "frequency_THz", "mode_energy_eV",
+        "initial_mode_energy_eV", "zpe_drift_eV",
+    }
+
+    numeric_fields = {
+        "time_fs", "frequency_THz", "mode_energy_eV",
+        "initial_mode_energy_eV", "zpe_drift_eV",
+    }
+
+    rows: list[dict[str, float | int]] = []
+    seen_keys: set[tuple[int, int, int]] = set()
+    last_step: dict[tuple[int, int], int] = {}
+
+    with path.open(encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        header = set(reader.fieldnames or [])
+        missing = required - header
+        if missing:
+            raise ValueError(
+                f"ZPE CSV {path} is missing required columns: {sorted(missing)}"
+            )
+
+        for line_no, row in enumerate(reader, start=2):
+            try:
+                replica = int(row["replica"])
+                step = int(row["step"])
+                mode = int(row["mode"])
+            except (ValueError, KeyError, TypeError) as exc:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: invalid integer field: {exc}"
+                ) from exc
+
+            if replica < 0:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: negative replica {replica}"
+                )
+            if mode < 0:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: negative mode {mode}"
+                )
+            if step < 0:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: negative step {step}"
+                )
+
+            key = (replica, step, mode)
+            if key in seen_keys:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: duplicate "
+                    f"(replica={replica}, step={step}, mode={mode})"
+                )
+            seen_keys.add(key)
+
+            group_key = (replica, mode)
+            prev_step = last_step.get(group_key)
+            if prev_step is not None and step < prev_step:
+                raise ValueError(
+                    f"ZPE CSV {path} line {line_no}: non-monotonic step "
+                    f"for replica={replica}, mode={mode}: "
+                    f"step={step} < previous={prev_step}"
+                )
+            last_step[group_key] = step
+
+            parsed: dict[str, float | int] = {
+                "replica": replica,
+                "step": step,
+                "mode": mode,
+            }
+            for field_name in numeric_fields:
+                try:
+                    val = float(row[field_name])
+                except (ValueError, KeyError, TypeError) as exc:
+                    raise ValueError(
+                        f"ZPE CSV {path} line {line_no}: "
+                        f"invalid numeric field '{field_name}': {exc}"
+                    ) from exc
+                if not math.isfinite(val):
+                    raise ValueError(
+                        f"ZPE CSV {path} line {line_no}: "
+                        f"non-finite value {val} for field '{field_name}'"
+                    )
+                if field_name == "frequency_THz" and val < 0.0:
+                    raise ValueError(
+                        f"ZPE CSV {path} line {line_no}: "
+                        f"negative frequency {val} THz for field '{field_name}'"
+                    )
+                parsed[field_name] = val
+
+            rows.append(parsed)
+
+    if not rows:
+        raise ValueError(f"ZPE CSV {path} contains no data rows")
+
+    return rows

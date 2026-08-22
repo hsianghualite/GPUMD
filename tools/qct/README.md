@@ -1,5 +1,21 @@
 # QCT tools
 
+## Engineering status
+
+The current `qct` branch is still under engineering review and has known
+memory-safety, replica-isolation, periodic-mode, correlation-statistics, and
+multi-GPU orchestration blockers. Before using QCT or LSC-IVR results for
+production science, read:
+
+- [QCT and LSC-IVR Comprehensive Code Review V3](QCT_LSC_IVR_CODE_REVIEW_V3.md)
+- [QCT and LSC-IVR Repair Plan](QCT_LSC_IVR_FIX_PLAN.md)
+- [LSC-IVR Thermal Conductivity Guide](LSC_IVR_KAPPA_GUIDE.md)
+
+The older [Native QCT Review Issues](REVIEW_ISSUES.md) and
+[LSC-IVR Comprehensive Code Review V2](LSC_IVR_CODE_REVIEW_V2.md) are retained
+as historical records. Their current-status conclusions are superseded by the
+V3 review.
+
 ## Trajectory analysis
 
 `analyze_qct.py` requires Python 3.10 or newer and NumPy. For a single-replica
@@ -35,8 +51,9 @@ dump_qct 100
 `qct_trajectory.xyz` contains one extxyz frame for each replica at every dump
 step. Each frame has `Replica`, `Step`, and `Seed` metadata. The companion
 `qct_thermo.csv` stores one energy and raw kinetic-temperature row per replica and step. The `kinetic_temperature_K` column is `2K/(3N k_B)` over all atoms and is a kinetic diagnostic, not a canonical molecular temperature, because it includes center-of-mass and rotational motion.
-The batch path currently accepts only `dump_qct`; standard measurements do not
-yet perform segmented per-replica reductions.
+The batch path accepts `dump_qct` and `compute_hac`. For HAC, GPUMD first
+reduces each replica independently, then applies normalized Wigner weights;
+`hac_replica.out` and `hac_reweighting.csv` preserve the per-replica audit.
 
 To compare a batch trajectory against independent runs with the same seeds:
 
@@ -266,7 +283,7 @@ C_AB(t) = Σ_i w_i · A(0)_i · B(t)_i  /  Σ_i w_i
 Standard error uses importance-sampling (ratio estimator) variance:
 
 ```
-Var[Ĉ(t)] ≈ (1/N) · Σ_i [ w_i² · (f_i - Ĉ)² ] / (Σ_i w_i)²
+Var[Ĉ(t)] ≈ Σ_i [ w_i² · (f_i - Ĉ)² ] / (Σ_i w_i)²
 ```
 
 ### `lsc_ivr.py` command-line options
@@ -310,5 +327,6 @@ SC-IVR/FBTS, PLDM), see [`SEMICLASSICAL_ROADMAP.md`](SEMICLASSICAL_ROADMAP.md).
 The SC-IVR/FBTS implementation plan is documented in
 [`SC_IVR_FBTS_PLAN.md`](SC_IVR_FBTS_PLAN.md).
 
-The LSC-IVR code review (20 issues found, 6 fixed) is documented in
-[`LSC_IVR_CODE_REVIEW.md`](LSC_IVR_CODE_REVIEW.md).
+The current combined QCT/LSC-IVR assessment is the
+[comprehensive V3 review](QCT_LSC_IVR_CODE_REVIEW_V3.md); implementation order
+and release gates are defined in the [repair plan](QCT_LSC_IVR_FIX_PLAN.md).

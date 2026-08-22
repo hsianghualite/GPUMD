@@ -9,13 +9,16 @@ at least ``threshold`` (default 0.95) of the peak throughput observed across
 successful, memory-safe batches.
 
 The CLI is intentionally light: it shells out to ``gpumd`` and ``nvidia-smi``
-which must be on PATH.  Tests only exercise :func:`recommend_candidate`.
+which must be on PATH.  CPU tests cover recommendation filtering and a fake
+executable smoke path without requiring a GPU.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
+import os
 import re
 import shutil
 import subprocess
@@ -88,6 +91,8 @@ def parse_gpumd_throughput(stderr_text):
 
 
 def query_process_memory(device_index, process_pid):
+    if device_index is None:
+        return None
     try:
         result = subprocess.run(
             [
@@ -112,50 +117,95 @@ def query_process_memory(device_index, process_pid):
     return None
 
 
+def query_device_memory(device_index):
+    if device_index is None:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                f"--id={device_index}",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, FileNotFoundError):
+        return None
+    for line in result.stdout.splitlines():
+        try:
+            return float(line.strip())
+        except ValueError:
+            continue
+    return None
+
+
 def run_one(candidate, template, gpumd, steps, no_output, device):
     workdir = Path(tempfile.mkdtemp(prefix=f"qct-bench-{candidate}-"))
-    for entry in template.iterdir():
-        if entry.is_dir():
-            shutil.copytree(entry, workdir / entry.name)
+    try:
+        for entry in template.iterdir():
+            if entry.is_dir():
+                shutil.copytree(entry, workdir / entry.name)
+            else:
+                shutil.copy2(entry, workdir / entry.name)
+        run_in = workdir / "run.in"
+        if not run_in.exists():
+            return {
+                "replicas": candidate,
+                "run_replica_steps_per_s": None,
+                "return_code": -1,
+                "memory_safe_at_85_percent": "unknown",
+            }
+        rewrite_run_in(run_in, candidate, steps, no_output)
+        env = dict(os.environ)
+        if device is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(device)
+        start = time.time()
+        proc = subprocess.Popen(
+            [gpumd],
+            cwd=workdir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        peak_memory = None
+        while proc.poll() is None:
+            memory = query_process_memory(device, proc.pid)
+            if memory is not None:
+                peak_memory = memory if peak_memory is None else max(peak_memory, memory)
+            time.sleep(0.1)
+        stdout, stderr = proc.communicate()
+        elapsed = max(time.time() - start, 1.0e-9)
+        throughput = None
+        if proc.returncode == 0:
+            throughput = parse_gpumd_throughput(stderr + "\n" + stdout)
+            if throughput is None and steps > 0:
+                throughput = (candidate * steps) / elapsed
+        total_memory = query_device_memory(device)
+        if peak_memory is None or total_memory is None:
+            memory_safe = "unknown"
         else:
-            shutil.copy2(entry, workdir / entry.name)
-    run_in = workdir / "run.in"
-    if not run_in.exists():
-        return {"replicas": candidate, "return_code": -1}
-    rewrite_run_in(run_in, candidate, steps, no_output)
-    env = dict(__import__("os").environ)
-    if device is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(device)
-    start = time.time()
-    proc = subprocess.run(
-        [gpumd],
-        cwd=workdir,
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    elapsed = max(time.time() - start, 1.0e-9)
-    throughput = None
-    if proc.returncode == 0:
-        throughput = parse_gpumd_throughput(proc.stderr + "\n" + proc.stdout)
-    if throughput is None:
-        throughput = (candidate * steps) / elapsed
-    memory = query_process_memory(device or 0, proc.pid) if proc.returncode == 0 else None
-    shutil.rmtree(workdir, ignore_errors=True)
-    return {
-        "replicas": candidate,
-        "run_replica_steps_per_s": throughput,
-        "return_code": proc.returncode,
-        "memory_safe_at_85_percent": True if memory is None else (memory >= 0),
-        "elapsed_s": elapsed,
-    }
+            memory_safe = peak_memory <= 0.85 * total_memory
+        return {
+            "replicas": candidate,
+            "run_replica_steps_per_s": throughput,
+            "return_code": proc.returncode,
+            "memory_safe_at_85_percent": memory_safe,
+            "peak_memory_MiB": peak_memory,
+            "total_memory_MiB": total_memory,
+            "elapsed_s": elapsed,
+        }
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def recommend_candidate(rows, threshold=0.95):
     """Pick the smallest batch reaching ``threshold`` of peak throughput.
 
-    Only rows with ``return_code == 0`` and ``memory_safe_at_85_percent`` truthy
+    Only rows with ``return_code == 0`` and ``memory_safe_at_85_percent is True``
     are considered.  Returns ``(recommended, peak)`` where ``peak`` is the row
     with the largest throughput and ``recommended`` is the smallest row whose
     throughput is at least ``threshold * peak``.  If only one row survives
@@ -163,7 +213,11 @@ def recommend_candidate(rows, threshold=0.95):
     """
     valid = [
         row for row in rows
-        if row.get("return_code", 0) == 0 and row.get("memory_safe_at_85_percent", True)
+        if row.get("return_code", 0) == 0
+        and row.get("memory_safe_at_85_percent") is True
+        and isinstance(row.get("run_replica_steps_per_s"), (int, float))
+        and math.isfinite(row["run_replica_steps_per_s"])
+        and row["run_replica_steps_per_s"] > 0
     ]
     if not valid:
         raise ValueError("No successful and memory-safe benchmark rows")
@@ -182,21 +236,29 @@ def main():
         raise ValueError(f"Template directory {template} does not exist")
     if args.threshold <= 0 or args.threshold > 1:
         raise ValueError("--threshold must be in (0, 1]")
-    device = None
-    candidate_env = __import__("os").environ.get("CUDA_VISIBLE_DEVICES")
-    if candidate_env is not None and candidate_env.isdigit():
-        device = int(candidate_env)
+    if args.steps <= 0:
+        raise ValueError("--steps must be positive")
+    gpumd = shutil.which(args.gpumd)
+    if gpumd is None:
+        gpumd_path = Path(args.gpumd).expanduser().resolve()
+        if not gpumd_path.is_file():
+            raise ValueError(f"GPUMD executable {args.gpumd} was not found")
+        gpumd = str(gpumd_path)
+    candidate_env = os.environ.get("CUDA_VISIBLE_DEVICES")
+    device = candidate_env.split(",", 1)[0].strip() if candidate_env else None
 
     rows = []
     for candidate in args.replicas:
         if candidate <= 0:
             raise ValueError("All replica candidates must be positive")
         print(f"Running benchmark with {candidate} replicas ...", flush=True)
-        row = run_one(candidate, template, args.gpumd, args.steps, args.no_output, device)
+        row = run_one(candidate, template, gpumd, args.steps, args.no_output, device)
         rows.append(row)
+        throughput = row.get("run_replica_steps_per_s")
+        throughput_text = "unknown" if throughput is None else f"{throughput:.6g}"
         print(
             f"  replicas={row['replicas']} "
-            f"throughput={row['run_replica_steps_per_s']:.6g} "
+            f"throughput={throughput_text} "
             f"return_code={row['return_code']} "
             f"memory_safe={row['memory_safe_at_85_percent']}",
             flush=True,
@@ -222,6 +284,8 @@ def main():
         "run_replica_steps_per_s",
         "return_code",
         "memory_safe_at_85_percent",
+        "peak_memory_MiB",
+        "total_memory_MiB",
         "elapsed_s",
     ]
     with Path(args.output).open("w", encoding="utf-8", newline="") as output:

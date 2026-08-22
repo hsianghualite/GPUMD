@@ -1,5 +1,10 @@
 # Native QCT Review Issues
 
+> Historical review: the current branch assessment is
+> [QCT and LSC-IVR Comprehensive Code Review V3](QCT_LSC_IVR_CODE_REVIEW_V3.md).
+> This document is retained for traceability, but its status conclusions are
+> superseded by V3.
+
 Review target: `qct` commit `c8208013` plus the current working-tree changes.
 
 Latest review: 2026-08-04. Local QCT Python tests pass (`10 passed`), and the
@@ -52,17 +57,10 @@ sign changes from reaction-coordinate diagnostics.
 
 ### QCT-005: Test suite cannot be collected
 
-Severity: **high**. Status: **open**.
+Severity: **high**. Status: **closed**.
 
-`tests/gpumd/qct/test_analyze_qct.py` imports
-`tools/qct/compare_batch.py`, and `test_benchmark_batch.py` imports
-`tools/qct/benchmark_batch.py`, but neither file exists in the branch. The
-full QCT pytest suite therefore fails during collection before running the
-tests. `tools/qct/README.md` advertises the same missing commands.
-
-The files now exist in the working tree and the QCT pytest suite collects and
-passes locally, but both files are still untracked. A clean checkout or a
-commit containing only tracked changes will reproduce the collection failure.
+The helper modules are tracked in `tools/qct/`, and the full QCT pytest suite
+now collects and passes locally (34 tests).
 
 ### QCT-006: No repository-level GPU regression for the four fixes
 

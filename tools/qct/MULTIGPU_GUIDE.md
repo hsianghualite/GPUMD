@@ -7,12 +7,13 @@ replica is an independent trajectory. GPUMD provides two approaches for
 multi-GPU execution:
 
 1. **Process-level parallelism (方案A — recommended for large systems)**:
-   `run_multigpu.py` launches one GPUMD process per GPU, each handling a
-   subset of replicas with `replicas=1` per process. This uses the standard
+   `run_multigpu.py` launches one GPUMD process per replica and schedules
+   those processes across the visible GPUs. Every process uses `replicas=1`,
+   a unique seed, and an isolated working directory. This uses the standard
    MD code path with cell-list neighbor search (O(N) scaling), making it
-   suitable for condensed-phase systems with >1000 atoms. Results are
-   merged automatically, including Wigner-weighted HAC averaging for
-   thermal conductivity.
+   suitable for condensed-phase systems with >1000 atoms. Results are merged
+   automatically, including Wigner-weighted HAC averaging for thermal
+   conductivity.
 
 2. **Single-GPU batch**: The native `replicas N` keyword packs N replicas
    into one GPU memory space. This uses the QCT batch neighbor list
@@ -34,9 +35,11 @@ multi-GPU execution:
 python tools/qct/run_multigpu.py \
     --template run_dir \
     --gpumd ~/gpumd/src/gpumd \
-    --total-replicas 8 \
+    --total-replicas 5 \
     --num-gpus 4 \
     --base-seed 12345 \
+    --workflow hac \
+    --shared-eigenvector /absolute/path/qct_eigenvector.out \
     --output merged_output/
 ```
 
@@ -46,31 +49,59 @@ The template directory must contain:
 - Any potential files referenced in `run.in`
 
 The tool:
-1. Divides `total-replicas` evenly across GPUs (each GPU gets
-   `total-replicas / num-gpus` replicas; for large systems, use 1 per GPU)
-2. Creates `gpu_0/`, `gpu_1/`, ... subdirectories
-3. Rewrites `run.in` in each with adjusted replica count and unique seed
-4. Sets `CUDA_VISIBLE_DEVICES` for each process
-5. Launches all GPUMD processes in parallel
-6. Merges results:
-   - `qct_trajectory.xyz` — all replica frames, renumbered contiguously
+1. Creates `replica_000000/`, `replica_000001/`, ... work directories
+2. Rewrites each `run.in` with `replicas 1` and a globally unique seed
+3. Schedules tasks across the selected `CUDA_VISIBLE_DEVICES` tokens
+4. Launches at most one process per visible GPU at a time
+5. Merges results:
+   - `qct_trajectory.xyz` — all replica frames, preserving global replica IDs
    - `qct_initial_summary.csv` — all replica Wigner weights
    - `qct_thermo.csv` — per-step thermo data
    - `qct_zpe.csv` — ZPE leakage data (if `dump_qct ... zpe` used)
    - `hac.out` — **Wigner-weighted** HAC for thermal conductivity
+   - `hac_uncertainty.csv` — between-replica standard error at each time
+   - `hac_merge_manifest.json` — normalized weights, effective sample size,
+     endpoint conductivity, hashes, and acceptance diagnostics
+
+Each replica's `manifest.json` records the resolved external input paths and
+SHA-256 hashes under `referenced_inputs`. Resume reuses a completed task only
+when its rewritten input, executable, model, referenced files, completion
+marker, required artifacts, and expected seed still validate. Each selected
+GPU owns a serial task queue, so no two launcher processes use the same GPU at
+the same time.
+
+For a periodic production calculation, calculate the automatic Hessian once
+and pass the resulting `qct_eigenvector.out` through `--shared-eigenvector`.
+The runner removes `hessian_displacement`, inserts `exclude_lowest 3`, and
+uses the same mode basis with independent seeds. Relative potential and mode
+paths are resolved before task directories are created.
 
 ## Thermal conductivity (Green-Kubo) with LSC-IVR
 
-For LSC-IVR thermal conductivity, each GPU process runs an independent
+For LSC-IVR thermal conductivity, each replica process runs an independent
 NVE trajectory with Wigner-sampled initial conditions and `compute_hac`.
-The `run_multigpu.py` tool automatically merges the `hac.out` files with
-proper Wigner weighting:
+The `run_multigpu.py` tool validates identical 11-column schemas, row counts,
+and time grids, then merges the `hac.out` files with proper Wigner weighting:
 
 $$\kappa(t) = \frac{\sum_i w_i \, \kappa_i(t)}{\sum_i w_i}$$
 
 where $w_i$ is the Wigner (anharmonic reweighting) factor for replica $i$.
 When `anharmonic_reweighting no` is set, all $w_i = 1$ and the merge
 reduces to a simple average.
+
+The merger prefers `log_wigner_weight`, normalizes in log space, and rejects
+missing or malformed replicas. By default it requires an effective sample
+size of at least `min(3, replicas)` and no normalized weight above 0.5 when
+more than one replica is requested. Override these research acceptance gates
+with `--min-effective-replicas` and `--max-normalized-weight` only when the
+reason is documented.
+
+For a native GPUMD batch (`replicas > 1`), the executable now performs the
+same weighted reduction internally and writes `hac_replica.out` plus
+`hac_reweighting.csv` for audit. `run_multigpu.py` always rewrites tasks to
+`replicas 1`, so its process-level merge is the only weighting layer and does
+not double-weight the per-process `hac.out` files. A single reweighted
+trajectory is not a final normalized estimator by itself.
 
 ### Example run.in for LSC-IVR thermal conductivity
 
@@ -86,6 +117,20 @@ run          2000000
 This template is used by `run_multigpu.py` — the seed is rewritten per
 GPU process, and `replicas 1` ensures each process runs one trajectory
 through the standard MD path (cell-list neighbor search, O(N) scaling).
+
+### WSL CUDA launch
+
+On WSL, run a single GPUMD trajectory through the wrapper below. It removes
+stale container GPU mappings and prepends the Windows driver bridge library
+directory before GPUMD starts:
+
+```bash
+tools/qct/run_wsl_cuda.sh /absolute/path/to/src/gpumd < run.in
+```
+
+`run_multigpu.py` applies the same environment normalization to every child
+process automatically while retaining its per-GPU `CUDA_VISIBLE_DEVICES`
+assignment.
 
 ## GPU selection
 
