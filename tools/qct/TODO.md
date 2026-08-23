@@ -495,6 +495,43 @@ SC-IVR/FBTS to small-molecule gas-phase dynamics.
 
 ---
 
+## P2 Implementation (Completed)
+
+All P2 priority items have been implemented and tested (131 tests pass):
+
+### §3.1 Backward Trajectory Propagation
+- [x] `compute_symmetric_correlation()` in `lsc_ivr.py`: computes `C(t) = <A(-t/2) B(t/2)>`
+  using trajectory midpoint splitting. Activated via `--symmetric` CLI flag.
+- [x] Better statistical properties for symmetric operators.
+
+### §3.2 Adaptive Timestep
+- [x] `recommend_timestep()` and `parse_hessian_frequencies()` in `lsc_ivr.py`.
+- [x] Recommends MD timestep from highest Hessian frequency with configurable
+  steps-per-period (default 20). Activated via `--adaptive-timestep` CLI flag.
+
+### §4.3 Wigner-Weighted SDC Merge
+- [x] `merge_sdc()` in `run_multigpu.py`: merges `sdc.out` files with Wigner weights.
+- [x] Added `"sdc"` workflow to `_detect_workflow()`, `_required_artifacts()`, and
+  main() dispatch.
+- [x] Added `sdc.out` to `GENERATED_ARTIFACTS`.
+
+### §4.6 Mode-Resolved Correlations
+- [x] `compute_mode_correlations()` and `write_mode_correlations_csv()` in `lsc_ivr.py`.
+- [x] Computes per-mode `C_k(t) = <Q_k(0) Q_k(t)>` from eigenvectors and trajectory.
+- [x] Activated via `--mode-correlations` and `--mode-masses` CLI flags.
+
+### §7.1 Blockwise HAC Uncertainty
+- [x] Block-wise variance estimation added to `merge_hac()` in `run_multigpu.py`.
+- [x] Separates Wigner-initial-condition uncertainty (between replicas) from
+  finite-trajectory uncertainty (within-replica blocks).
+- [x] Extended `hac_uncertainty.csv` with `block_se_*` and `combined_se_*` columns.
+- [x] Added `blockwise_uncertainty` section to `hac_merge_manifest.json`.
+- [x] Activated via `--block-size` CLI flag.
+
+### §10 SC-IVR Applicability Documentation
+- [x] Added applicability section to `SC_IVR_FBTS_PLAN.md`.
+- [x] Added method-applicability matrix to `SEMICLASSICAL_ROADMAP.md`.
+
 ## Priority Summary
 
 | Priority | Section | Items | Rationale |
@@ -508,12 +545,12 @@ SC-IVR/FBTS to small-molecule gas-phase dynamics.
 | **P1** | §4.2 | Wigner-weighted DOS | Core LSC-IVR observable |
 | **P1** | §4.4 | Wigner-weighted IR spectrum | Core molecular spectroscopy |
 | **P1** | §4.5 | Multi-operator correlation | Efficiency improvement |
-| **P2** | §2.2–2.4 | T=0, Morse, microcanonical Wigner | Specialized sampling modes |
-| **P2** | §3.1–3.2 | Backward propagation, adaptive timestep | Statistical/numerical improvements |
-| **P2** | §4.3 | Wigner-weighted SDC | Quantum diffusion |
-| **P2** | §4.6 | Mode-resolved correlations | Detailed spectral analysis |
-| **P2** | §7.1 | Blockwise HAC uncertainty | Statistical rigor |
-| **P2** | §10 | SC-IVR applicability docs | Prevent misuse |
+| **P2 ✅** | §3.1–3.2 | Backward propagation, adaptive timestep | Statistical/numerical improvements |
+| **P2 ✅** | §4.3 | Wigner-weighted SDC | Quantum diffusion |
+| **P2 ✅** | §4.6 | Mode-resolved correlations | Detailed spectral analysis |
+| **P2 ✅** | §7.1 | Blockwise HAC uncertainty | Statistical rigor |
+| **P2 ✅** | §10 | SC-IVR applicability docs | Prevent misuse |
+| **P2** | §2.2–2.4 | T=0, Morse, microcanonical Wigner | Specialized sampling modes (future) |
 | **P3** | §5.2–5.3 | Benchmarks, binary Hessian | Optimization |
 | **P3** | §6.* | QCT scattering workflow | Gas-phase application, smaller user base |
 | **P3** | §8 | Hessian memory policy | Large-system optimization |

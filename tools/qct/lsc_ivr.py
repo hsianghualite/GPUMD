@@ -895,6 +895,39 @@ def parse_args() -> argparse.Namespace:
         "--dump-interval", type=int, default=None,
         help="Trajectory dump interval in MD steps (used if no Time= attribute).",
     )
+    # --- P2 features ---
+    parser.add_argument(
+        "--symmetric", action="store_true",
+        help="Use symmetric (backward) correlation C(t) = <A(-t/2) B(t/2)> "
+             "instead of one-sided C(t) = <A(0) B(t)>.  Better statistics "
+             "for symmetric operators.  (P2 §3.1)",
+    )
+    parser.add_argument(
+        "--adaptive-timestep", type=Path, default=None,
+        help="Path to qct_hessian.out (or any file with one frequency per "
+             "line in THz).  Prints a recommended MD timestep based on the "
+             "fastest vibrational mode and exits.  (P2 §3.2)",
+    )
+    parser.add_argument(
+        "--steps-per-period", type=int, default=20,
+        help="Target steps per period for --adaptive-timestep (default: 20).",
+    )
+    parser.add_argument(
+        "--mode-correlations", type=Path, default=None,
+        help="Path to qct_eigenvector.out (mass-weighted eigenvector file, "
+             "one mode per row).  Computes per-mode position autocorrelations "
+             "C_k(t) = <Q_k(0) Q_k(t)>.  (P2 §4.6)",
+    )
+    parser.add_argument(
+        "--mode-masses", type=Path, default=None,
+        help="Path to a file with atomic masses (one per line in amu) for "
+             "mode correlation computation.  Required with --mode-correlations "
+             "if trajectory frames lack Masses.",
+    )
+    parser.add_argument(
+        "--mode-output", type=Path, default=Path("mode_correlations.csv"),
+        help="Output CSV for mode-resolved correlations (default: mode_correlations.csv).",
+    )
     return parser.parse_args()
 
 
@@ -905,6 +938,23 @@ def main() -> None:
         raise ValueError(
             "--ir-spectrum is temporarily disabled until dipole alignment, transform, and units are versioned."
         )
+
+    # --- P2: Adaptive timestep recommendation (early exit) ---
+    if args.adaptive_timestep is not None:
+        freqs = parse_hessian_frequencies(args.adaptive_timestep)
+        dt = recommend_timestep(
+            freqs,
+            target_steps_per_period=args.steps_per_period,
+        )
+        print(f"Loaded {len(freqs)} frequencies from {args.adaptive_timestep}")
+        positive = freqs[freqs > 0.0]
+        if len(positive) > 0:
+            print(f"  Max frequency: {float(np.max(positive)):.4f} THz")
+            period = 1000.0 / float(np.max(positive))
+            print(f"  Period: {period:.4f} fs")
+        print(f"  Recommended timestep: {dt:.6f} fs "
+              f"({args.steps_per_period} steps/period)")
+        return
 
     # Load configuration
     config: dict[str, Any] = {}
@@ -1008,10 +1058,17 @@ def main() -> None:
         print(f"    Operator A: {corr_a_spec}")
         print(f"    Operator B: {corr_b_spec}")
 
-        corr = compute_correlation(
-            replica_trajs, weights, corr_op_a, corr_op_b,
-            max_lag_fs=args.max_lag,
-        )
+        if args.symmetric:
+            corr = compute_symmetric_correlation(
+                replica_trajs, weights, corr_op_a, corr_op_b,
+                max_lag_fs=args.max_lag,
+            )
+            print(f"    [symmetric mode: C(t) = <A(-t/2) B(t/2)>]")
+        else:
+            corr = compute_correlation(
+                replica_trajs, weights, corr_op_a, corr_op_b,
+                max_lag_fs=args.max_lag,
+            )
         dt_text = "n/a" if len(corr.time_fs) < 2 else f"{corr.time_fs[1]-corr.time_fs[0]:.4f} fs"
         print(f"    {len(corr.time_fs)} time points, dt={dt_text}")
 
@@ -1082,6 +1139,332 @@ def main() -> None:
     if len(first_corr.c_ab_normalized) > 1:
         print(f"Correlation at t={first_corr.time_fs[-1]:.1f} fs: {first_corr.c_ab_normalized[-1]:.6e}")
 
+    # --- P2: Mode-resolved correlations ---
+    if args.mode_correlations is not None:
+        print(f"\nComputing mode-resolved correlations...")
+        eigvecs = parse_hessian_frequencies(args.mode_correlations)
+        # eigenvector file: each row is a mode's eigenvector (3*N_atoms components)
+        eigvecs = eigvecs.reshape(eigvecs.shape[0], -1) if eigvecs.ndim == 1 else eigvecs
+
+        # Get masses from trajectory frames or --mode-masses
+        first_frames = next(iter(replica_trajs.values()))
+        if first_frames[0].masses is not None:
+            masses = np.array(first_frames[0].masses, dtype=float)
+        elif args.mode_masses is not None:
+            masses = np.loadtxt(args.mode_masses)
+        else:
+            raise ValueError(
+                "Cannot determine masses for mode correlations: "
+                "trajectory frames lack Masses and --mode-masses not given."
+            )
+
+        n_atoms = len(masses)
+        n_modes = eigvecs.shape[0]
+        print(f"  {n_atoms} atoms, {n_modes} modes")
+
+        # Determine dt
+        times, dt_val = _validate_replica_grid(replica_trajs)
+
+        mode_results = compute_mode_correlations(
+            replica_trajs, weights, eigvecs, masses,
+            dt_fs=dt_val,
+            max_lag_fs=args.max_lag,
+        )
+        write_mode_correlations_csv(args.mode_output, mode_results)
+        print(f"  Written: {args.mode_output}")
+
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# Adaptive timestep recommendation (P2 §3.2)
+# ---------------------------------------------------------------------------
+
+def recommend_timestep(
+    frequencies_thz: np.ndarray,
+    target_steps_per_period: int = 20,
+    max_dt_fs: float = 1.0,
+    min_dt_fs: float = 0.01,
+) -> float:
+    """Recommend an MD timestep from the highest vibrational frequency.
+
+    The rule of thumb is that the timestep should be small enough to
+    resolve the fastest oscillation with at least ``target_steps_per_period``
+    steps per period.
+
+    Parameters
+    ----------
+    frequencies_thz : array of mode frequencies in THz (positive only).
+    target_steps_per_period : minimum number of steps per period of
+        the fastest mode (default 20).
+    max_dt_fs : maximum allowed timestep in fs.
+    min_dt_fs : minimum allowed timestep in fs.
+
+    Returns
+    -------
+    Recommended timestep in fs.
+    """
+    positive = frequencies_thz[frequencies_thz > 0.0]
+    if len(positive) == 0:
+        return max_dt_fs
+    omega_max = float(np.max(positive))
+    # period = 1 / f (in fs, since f is in THz = cycles/fs * 1000 → period in ps)
+    # f [THz] → f [cycles/fs] = f * 1e-3 → period [fs] = 1 / (f * 1e-3) = 1000 / f
+    period_fs = 1000.0 / omega_max
+    dt = period_fs / target_steps_per_period
+    return float(np.clip(dt, min_dt_fs, max_dt_fs))
+
+
+def parse_hessian_frequencies(hessian_out: Path) -> np.ndarray:
+    """Read frequencies from qct_hessian.out.
+
+    The file contains 3N frequencies (in THz), one per line.
+    Returns them as a numpy array.
+    """
+    data = np.loadtxt(hessian_out)
+    return np.asarray(data, dtype=float).ravel()
+
+
+# ---------------------------------------------------------------------------
+# Backward trajectory propagation (P2 §3.1)
+# ---------------------------------------------------------------------------
+
+def compute_symmetric_correlation(
+    replica_trajs: dict[int, list[aq.Frame]],
+    weights: dict[int, float],
+    op_a: Callable[[aq.Frame], float],
+    op_b: Callable[[aq.Frame], float],
+    max_lag_fs: float | None = None,
+) -> CorrelationResult:
+    """Compute symmetric correlation C(t) = <A(-t/2) B(t/2)>.
+
+    For each replica, the trajectory is split at the midpoint.  The
+    "backward" half (frames before midpoint) is used with reversed time
+    ordering, and the "forward" half (frames after midpoint) is used as-is.
+
+    This implements the symmetric form:
+        C(t) = <w A(t_mid - lag) B(t_mid + lag)> / <w>
+
+    which has better statistical properties than the one-sided form
+    ``C(t) = <A(0) B(t)>`` for symmetric operators.
+
+    The input trajectories are assumed to be equispaced.  Each replica
+    must have at least ``2 * max_lag - 1`` frames.
+    """
+    times, dt = _validate_replica_grid(replica_trajs)
+    n_frames = len(times)
+    half = n_frames // 2
+    max_lag = half
+    if max_lag_fs is not None:
+        if max_lag_fs < 0.0:
+            raise ValueError("max_lag_fs must be non-negative.")
+        max_lag = min(max_lag, int(math.floor(max_lag_fs / dt)) + 1)
+    if max_lag < 1:
+        raise ValueError("Insufficient frames for symmetric correlation.")
+
+    replica_ids = sorted(replica_trajs)
+    replica_weights: dict[int, float] = {}
+    for rid in replica_ids:
+        w = float(weights.get(rid, 1.0))
+        if not math.isfinite(w) or w < 0.0:
+            raise ValueError(f"Replica {rid} has invalid weight {w}.")
+        replica_weights[rid] = w
+    if sum(replica_weights.values()) <= 0.0:
+        raise ValueError("All replica weights are zero; correlation is undefined.")
+
+    c_ab = np.zeros(max_lag, dtype=float)
+    weight_sum = np.zeros(max_lag, dtype=float)
+    n_samples = np.zeros(max_lag, dtype=int)
+
+    for rid, frames in replica_trajs.items():
+        w = replica_weights[rid]
+        for lag in range(max_lag):
+            idx_a = half - lag
+            idx_b = half + lag
+            if idx_a < 0 or idx_b >= len(frames):
+                break
+            a_val = op_a(frames[idx_a])
+            b_val = op_b(frames[idx_b])
+            c_ab[lag] += w * a_val * b_val
+            weight_sum[lag] += w
+            n_samples[lag] += 1
+
+    if np.any(weight_sum <= 0.0):
+        raise ValueError("At least one symmetric correlation lag has no positive-weight samples.")
+    c_normalized = c_ab / weight_sum
+
+    # Standard error (same ratio-estimator formula)
+    weighted_var = np.zeros(max_lag, dtype=float)
+    for rid, frames in replica_trajs.items():
+        w = replica_weights[rid]
+        for lag in range(max_lag):
+            idx_a = half - lag
+            idx_b = half + lag
+            if idx_a < 0 or idx_b >= len(frames):
+                break
+            f_i = op_a(frames[idx_a]) * op_b(frames[idx_b])
+            residual = f_i - c_normalized[lag]
+            weighted_var[lag] += (w * w) * (residual * residual)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        variance = np.where(
+            n_samples > 1,
+            weighted_var / np.maximum(weight_sum * weight_sum, 1e-60),
+            0.0,
+        )
+        std_error = np.sqrt(variance)
+
+    time_axis = np.arange(max_lag, dtype=float) * dt
+    return CorrelationResult(
+        time_fs=time_axis,
+        c_ab=c_ab,
+        c_ab_normalized=c_normalized,
+        std_error=std_error,
+        n_samples=n_samples,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mode-resolved correlations (P2 §4.6)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ModeCorrelationResult:
+    """Per-mode correlation: C_k(t) = <Q_k(0) Q_k(t)>."""
+    mode_index: int
+    frequency_thz: float
+    time_fs: np.ndarray
+    c_kk: np.ndarray              # raw weighted correlation
+    c_kk_normalized: np.ndarray  # normalized by total weight
+    std_error: np.ndarray
+
+
+def compute_mode_correlations(
+    replica_trajs: dict[int, list[aq.Frame]],
+    weights: dict[int, float],
+    eigenvectors: np.ndarray,
+    masses: np.ndarray,
+    dt_fs: float,
+    max_lag_fs: float | None = None,
+    n_modes: int | None = None,
+) -> list[ModeCorrelationResult]:
+    """Compute per-mode position autocorrelations C_k(t) = <Q_k(0) Q_k(t)>.
+
+    The normal-mode coordinate Q_k is computed from the Cartesian positions
+    using the eigenvector matrix:
+
+        Q_k = Σ_i sqrt(m_i) * e_ik · r_i
+
+    where e_ik is the eigenvector for mode k and atom i (3-component).
+
+    Parameters
+    ----------
+    replica_trajs : per-replica frame lists.
+    weights : per-replica Wigner weights.
+    eigenvectors : (n_modes, 3*n_atoms) eigenvector matrix (mass-weighted).
+    masses : (n_atoms,) masses in amu.
+    dt_fs : time step between frames in fs.
+    max_lag_fs : maximum correlation lag.  Default: full trajectory.
+    n_modes : number of modes to compute.  Default: all.
+    """
+    n_atoms = len(masses)
+    sqrt_mass = np.sqrt(masses)
+    n_total_modes = eigenvectors.shape[0]
+    if n_modes is None:
+        n_modes = n_total_modes
+
+    # Determine max_lag
+    replica_ids = sorted(replica_trajs)
+    n_frames = len(replica_trajs[replica_ids[0]])
+    max_lag = n_frames
+    if max_lag_fs is not None:
+        max_lag = min(max_lag, int(math.floor(max_lag_fs / dt_fs)) + 1)
+    if max_lag < 1:
+        raise ValueError("Insufficient frames for mode correlation.")
+
+    # Precompute Q_k(t) for each replica and mode
+    # Q_k(t) = sum_i sqrt(m_i) * e_ik · r_i
+    mode_coords: dict[int, np.ndarray] = {}  # rid -> (n_frames, n_modes)
+    for rid, frames in replica_trajs.items():
+        qkt = np.zeros((n_frames, n_modes), dtype=float)
+        for frame_idx, frame in enumerate(frames):
+            pos = frame.positions  # (n_atoms, 3)
+            for k in range(n_modes):
+                # e_ik is (n_atoms, 3) reshaped from eigenvectors[k]
+                e_k = eigenvectors[k].reshape(n_atoms, 3)
+                qkt[frame_idx, k] = np.sum(sqrt_mass[:, None] * e_k * pos)
+        mode_coords[rid] = qkt
+
+    results = []
+    for k in range(n_modes):
+        c_kk = np.zeros(max_lag, dtype=float)
+        weight_sum = np.zeros(max_lag, dtype=float)
+        n_samples = np.zeros(max_lag, dtype=int)
+
+        for rid in replica_ids:
+            w = float(weights.get(rid, 1.0))
+            qk = mode_coords[rid][:, k]
+            for lag in range(max_lag):
+                if lag >= len(qk):
+                    break
+                c_kk[lag] += w * qk[0] * qk[lag]
+                weight_sum[lag] += w
+                n_samples[lag] += 1
+
+        if np.any(weight_sum <= 0.0):
+            raise ValueError(f"Mode {k} has no positive-weight samples.")
+        c_norm = c_kk / weight_sum
+
+        # Standard error
+        weighted_var = np.zeros(max_lag, dtype=float)
+        for rid in replica_ids:
+            w = float(weights.get(rid, 1.0))
+            qk = mode_coords[rid][:, k]
+            for lag in range(max_lag):
+                if lag >= len(qk):
+                    break
+                f_i = qk[0] * qk[lag]
+                residual = f_i - c_norm[lag]
+                weighted_var[lag] += (w * w) * (residual * residual)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            variance = np.where(
+                n_samples > 1,
+                weighted_var / np.maximum(weight_sum * weight_sum, 1e-60),
+                0.0,
+            )
+            std_err = np.sqrt(variance)
+
+        time_axis = np.arange(max_lag, dtype=float) * dt_fs
+        results.append(ModeCorrelationResult(
+            mode_index=k,
+            frequency_thz=0.0,  # filled by caller if known
+            time_fs=time_axis,
+            c_kk=c_kk,
+            c_kk_normalized=c_norm,
+            std_error=std_err,
+        ))
+
+    return results
+
+
+def write_mode_correlations_csv(
+    path: Path,
+    results: list[ModeCorrelationResult],
+) -> None:
+    """Write mode-resolved correlations to a CSV file."""
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["mode", "frequency_THz", "time_fs",
+                         "C_kk_raw", "C_kk_normalized", "std_error"])
+        for result in results:
+            for i in range(len(result.time_fs)):
+                writer.writerow([
+                    result.mode_index,
+                    f"{result.frequency_thz:.6f}",
+                    f"{result.time_fs[i]:.6f}",
+                    f"{result.c_kk[i]:.12e}",
+                    f"{result.c_kk_normalized[i]:.12e}",
+                    f"{result.std_error[i]:.12e}",
+                ])
+    print(f"Wrote mode-resolved correlations to {path}")

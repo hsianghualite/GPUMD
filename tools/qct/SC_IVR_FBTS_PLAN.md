@@ -439,3 +439,53 @@ Before starting SC-IVR implementation, the following should be true:
 
 If all four conditions are met, proceed with FBTS first (lower risk,
 better convergence), then full SC-IVR if needed.
+
+---
+
+## Applicability Limits
+
+### System size constraint: N ≤ 20–30 atoms
+
+SC-IVR/FBTS is **not applicable to condensed-phase thermal conductivity**.
+The sign problem causes the signal-to-noise ratio to degrade
+exponentially with system size:
+
+- The monodromy matrix is `6N × 6N`. For N = 1000 atoms (a modest
+  supercell), this is `6000 × 6000 = 36M` elements per replica.
+- The oscillatory phase `exp(iS_t/ℏ)` causes catastrophic cancellation
+  when averaging over replicas. The number of trajectories needed for
+  convergence scales as `~exp(αN)` where α depends on the trajectory
+  length and temperature.
+- For condensed-phase thermal conductivity (N > 100, trajectory length
+  > 100 ps), the required number of trajectories is astronomically
+  large.
+
+**Practical limit**: N ≤ 20–30 atoms for gas-phase molecular dynamics
+where quantum phase information (tunneling, interference, resonance) is
+essential.
+
+### Applicable observables
+
+| Observable | Suitable? | Reason |
+|---|---|---|
+| Vibrational spectra (gas-phase) | ✅ | Short trajectories, small N, phase-sensitive frequencies |
+| Tunneling splittings | ✅ | Core SC-IVR application; phase is essential |
+| Reaction rates (small molecules) | ✅ | FBTS reduces sign problem for rate calculations |
+| Condensed-phase thermal conductivity | ❌ | Exponential sign problem with N; LSC-IVR or RPMD needed |
+| Condensed-phase diffusion | ❌ | Same sign problem; use LSC-IVR or RPMD |
+| Large-molecule spectroscopy (N > 30) | ❌ | Sign problem; use LSC-IVR |
+
+### Decision guide
+
+For **condensed-phase thermal conductivity**, use:
+1. **LSC-IVR** (recommended): cheapest, captures quantum initial conditions
+2. **RPMD/TRPMD**: more expensive, captures some quantum coherence
+3. **QTB**: effective quantum correction, classical propagation
+
+For **small-molecule gas-phase dynamics** where quantum phase matters:
+1. **FBTS** (start here): partial phase cancellation, better convergence
+2. **Full SC-IVR**: if FBTS is insufficient
+
+For **large-molecule spectroscopy** (N > 30):
+1. **LSC-IVR**: real quantum weights, no sign problem
+2. **RPMD**: if centroid-based methods are preferred

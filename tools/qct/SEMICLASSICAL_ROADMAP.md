@@ -238,6 +238,23 @@ yes -> Do tunneling / interference / resonance matter?
               no  -> LSC-IVR (Method 1); reuses the QCT engine, cheapest, first to implement.
 ```
 
+
+## Method applicability matrix
+
+| Method | Condensed-phase κ | Small-mol spectra | Tunneling/rates | Cost |
+|--------|:-:|:-:|:-:|:-:|
+| Classical MD | ✅ baseline | ⚠️ no quantum | ❌ | 1× |
+| QTB | ✅ approx. | ⚠️ effective | ❌ | 1× |
+| LSC-IVR | ✅ recommended | ✅ | ⚠️ partial | 1× |
+| RPMD/TRPMD | ⚠️ spring issue | ✅ | ⚠️ partial | P× |
+| SC-IVR/FBTS | ❌ sign problem | ✅ precise | ✅ | >>1× |
+
+Key:
+- **Condensed-phase κ**: thermal conductivity of bulk solids (N > 100)
+- **Small-mol spectra**: vibrational spectra of gas-phase molecules (N ≤ 30)
+- **Tunneling/rates**: tunneling splittings, reaction rates
+- **Cost**: relative to classical MD; P = number of beads (RPMD)
+
 ## Shared infrastructure to build once
 
 Several pieces are common to more than one method and should be designed

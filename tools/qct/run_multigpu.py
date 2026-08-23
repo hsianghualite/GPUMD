@@ -59,6 +59,7 @@ GENERATED_ARTIFACTS = {
     "qct_thermo.csv",
     "qct_trajectory.xyz",
     "qct_zpe.csv",
+    "sdc.out",
     "thermo.out",
 }
 
@@ -90,6 +91,8 @@ def _detect_workflow(run_in: Path) -> str:
         return "hac"
     if any(re.match(r"^\s*compute_hnemd\b", line) for line in lines):
         return "hnemd"
+    if any(re.match(r"^\s*compute_sdc\b", line) for line in lines):
+        return "sdc"
     if any(re.match(r"^\s*compute_dos\b", line) for line in lines):
         return "dos"
     if any(re.match(r"^\s*dump_dipole\b", line) for line in lines):
@@ -98,7 +101,7 @@ def _detect_workflow(run_in: Path) -> str:
         return "trajectory"
     raise ValueError(
         "Could not infer workflow: template needs compute_hac, compute_hnemd, "
-        "compute_dos, dump_dipole, or dump_qct"
+        "compute_sdc, compute_dos, dump_dipole, or dump_qct"
     )
 
 
@@ -338,6 +341,7 @@ def merge_hac(
     manifest_file: Path | None = None,
     min_effective_replicas: float = 0.0,
     max_normalized_weight: float = 1.0,
+    block_size: int | None = None,
 ) -> dict:
     """Merge hac.out files from multiple GPU runs with Wigner weighting.
 
@@ -439,12 +443,64 @@ def merge_hac(
         )
     )
 
+    # Blockwise (within-replica) uncertainty for finite-trajectory noise.
+    # Separates two sources of uncertainty:
+    #   1. Wigner-initial-condition (between-replica) — captured by standard_error/kappa_se above
+    #   2. Finite-trajectory (within-replica block) — captured by block variance below
+    # Total uncertainty = sqrt(SE_replica^2 + SE_block^2)
+    #
+    # Block analysis: split each replica's HAC into non-overlapping blocks,
+    # compute block-averaged kappa endpoints, and estimate the variance across
+    # blocks. This gives a single SE per kappa component (not per time row),
+    # which is then broadcast to all time rows for the output file.
+    blockwise_kappa_se_flat = np.zeros(4, dtype=float)  # (x, y, z, avg)
+    blockwise_hac_se_flat = np.zeros(10, dtype=float)
+    n_blocks_total = 0
+    if block_size is not None and block_size > 0 and reference_shape[0] >= block_size * 2:
+        n_blocks_per_replica = reference_shape[0] // block_size
+        n_blocks_total = n_blocks_per_replica * len(datasets)
+        if n_blocks_per_replica > 1:
+            # Block-averaged kappa endpoint for each replica: (n_blocks, 4)
+            block_kappa_endpoints = np.zeros((len(datasets), n_blocks_per_replica, 4), dtype=float)
+            block_hac_means = np.zeros((len(datasets), n_blocks_per_replica, 10), dtype=float)
+            for i in range(len(datasets)):
+                for b in range(n_blocks_per_replica):
+                    start = b * block_size
+                    end = start + block_size
+                    # Block-averaged kappa: mean of kappa over the block's time rows
+                    block_kappa_endpoints[i, b] = np.mean(kappa_replicas[i, start:end, :], axis=0)
+                    block_hac_means[i, b] = np.mean(stack[i, start:end, 1:11], axis=0)
+            # Weighted block mean (over replicas): (n_blocks, 4)
+            weighted_block_kappa = np.tensordot(normalized, block_kappa_endpoints, axes=(0, 0))
+            weighted_block_hac = np.tensordot(normalized, block_hac_means, axes=(0, 0))
+            # Accumulate weighted block variance across replicas
+            for i in range(len(datasets)):
+                w = normalized[i]
+                diff_k = block_kappa_endpoints[i] - weighted_block_kappa  # (n_blocks, 4)
+                diff_h = block_hac_means[i] - weighted_block_hac          # (n_blocks, 10)
+                blockwise_kappa_se_flat += (w ** 2) * np.var(diff_k, axis=0, ddof=1)
+                blockwise_hac_se_flat += (w ** 2) * np.var(diff_h, axis=0, ddof=1)
+            # Normalize by sum of w_i^2 (effective replicas)
+            w2_sum = max(float(np.sum(normalized ** 2)), 1e-60)
+            blockwise_kappa_se_flat = np.sqrt(blockwise_kappa_se_flat / w2_sum)
+            blockwise_hac_se_flat = np.sqrt(blockwise_hac_se_flat / w2_sum)
+
+    # Broadcast flat SE to per-time-row for the output file
+    blockwise_kappa_se = np.broadcast_to(blockwise_kappa_se_flat, (reference_shape[0], 4)).copy()
+    blockwise_hac_se = np.broadcast_to(blockwise_hac_se_flat, (reference_shape[0], 10)).copy()
+
+    # Combined uncertainty: sqrt(SE_replica^2 + SE_block^2)
+    combined_kappa_se = np.sqrt(kappa_se ** 2 + blockwise_kappa_se ** 2)
+    combined_hac_se = np.sqrt(standard_error ** 2 + blockwise_hac_se ** 2)
+
     if uncertainty_file is not None:
         temporary_uncertainty = uncertainty_file.with_name(uncertainty_file.name + ".tmp")
         fieldnames = [
             "time_ps", "se_hac_xi", "se_hac_xo", "se_hac_yi", "se_hac_yo", "se_hac_z",
             "se_rtc_xi", "se_rtc_xo", "se_rtc_yi", "se_rtc_yo", "se_rtc_z",
             "se_kappa_x", "se_kappa_y", "se_kappa_z", "se_kappa_avg",
+            "block_se_kappa_x", "block_se_kappa_y", "block_se_kappa_z", "block_se_kappa_avg",
+            "combined_se_kappa_x", "combined_se_kappa_y", "combined_se_kappa_z", "combined_se_kappa_avg",
         ]
         with temporary_uncertainty.open("w", encoding="utf-8", newline="") as output_handle:
             writer = csv.writer(output_handle)
@@ -454,6 +510,8 @@ def merge_hac(
                     [f"{time_value:.15e}"]
                     + [f"{value:.15e}" for value in standard_error[row_index]]
                     + [f"{value:.15e}" for value in kappa_se[row_index]]
+                    + [f"{value:.15e}" for value in blockwise_kappa_se[row_index]]
+                    + [f"{value:.15e}" for value in combined_kappa_se[row_index]]
                 )
         os.replace(temporary_uncertainty, uncertainty_file)
 
@@ -498,6 +556,12 @@ def merge_hac(
             "kappa_y": float(kappa_mean[-1, 1]),
             "kappa_z": float(kappa_mean[-1, 2]),
             "kappa_avg": float(kappa_mean[-1, 3]),
+        },
+        "blockwise_uncertainty": {
+            "block_size": block_size,
+            "n_blocks_total": n_blocks_total,
+            "block_se_kappa_avg_end": float(blockwise_kappa_se_flat[3]) if n_blocks_total > 0 else None,
+            "combined_se_kappa_avg_end": float(np.sqrt(kappa_se[-1, 3] ** 2 + blockwise_kappa_se_flat[3] ** 2)),
         },
     }
     acceptance_errors = []
@@ -678,6 +742,60 @@ def merge_hnemd(
     print(f"  Merged {len(datasets)} NEMD thermo files: N_eff={n_eff:.3f}")
 
 
+def merge_sdc(
+    sdc_files: list[Path],
+    summary_files: list[Path],
+    output_file: Path,
+    replica_ids: list[int],
+) -> None:
+    """Merge sdc.out files from multiple replicas with Wigner weighting.
+
+    sdc.out format (7 columns per group, single group):
+        time_ps, msd_x, msd_y, msd_z, sdc_x, sdc_y, sdc_z
+
+    For multi-group runs, columns 1–6 repeat for each group.
+    Merged: sdc_merged = sum_i w_i * sdc_i / sum_i w_i
+    """
+    import numpy as np
+
+    if not sdc_files:
+        return
+    datasets = []
+    log_weights = []
+    ref_time = None
+    for rid, sdc_path, summary_path in zip(replica_ids, sdc_files, summary_files):
+        if not sdc_path.is_file():
+            raise ValueError(f"Missing SDC file for replica {rid}: {sdc_path}")
+        data = np.loadtxt(sdc_path)
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        if ref_time is None:
+            ref_time = data[:, 0].copy()
+        elif not np.allclose(data[:, 0], ref_time, rtol=1e-12, atol=1e-14):
+            raise ValueError(f"SDC time-grid mismatch for replica {rid}")
+        weights = load_wigner_log_weights(summary_path)
+        log_weights.append(next(iter(weights.values())))
+        datasets.append(data)
+
+    finite_logs = [v for v in log_weights if math.isfinite(v)]
+    offset = max(finite_logs) if finite_logs else 0.0
+    scaled = np.asarray(
+        [0.0 if v == -math.inf else math.exp(v - offset) for v in log_weights],
+        dtype=float,
+    )
+    normalized = scaled / np.sum(scaled)
+    stack = np.stack(datasets, axis=0)
+    merged = np.empty_like(datasets[0])
+    merged[:, 0] = ref_time
+    merged[:, 1:] = np.tensordot(normalized, stack[:, :, 1:], axes=(0, 0))
+
+    tmp = output_file.with_name(output_file.name + ".tmp")
+    np.savetxt(tmp, merged, fmt="%25.15e")
+    os.replace(tmp, output_file)
+    n_eff = 1.0 / np.sum(normalized ** 2)
+    print(f"  Merged {len(datasets)} SDC files: N_eff={n_eff:.3f}")
+
+
 def _visible_device_tokens(requested: int | None) -> list[str]:
     env = os.environ.get("CUDA_VISIBLE_DEVICES")
     if env and env.strip():
@@ -781,6 +899,8 @@ def _required_artifacts(workflow: str) -> tuple[str, ...]:
         return ("qct_initial_summary.csv", "hac.out")
     if workflow == "hnemd":
         return ("qct_initial_summary.csv", "thermo.out")
+    if workflow == "sdc":
+        return ("qct_initial_summary.csv", "sdc.out")
     if workflow == "dos":
         return ("qct_initial_summary.csv", "dos.out")
     if workflow == "ir":
@@ -1100,12 +1220,18 @@ def main():
         help="Number of replicas per temperature in sweep mode (default: 5).",
     )
     parser.add_argument(
-        "--workflow", choices=("auto", "hac", "hnemd", "dos", "ir", "trajectory"), default="auto",
+        "--workflow", choices=("auto", "hac", "hnemd", "sdc", "dos", "ir", "trajectory"), default="auto",
         help="Required artifact set; auto detects from run.in keywords",
     )
     parser.add_argument(
         "--shared-eigenvector", type=Path, default=None,
         help="Validated qct_eigenvector.out reused by every replica",
+    )
+    parser.add_argument(
+        "--block-size", type=int, default=None,
+        help="Block size (in time rows) for blockwise HAC uncertainty estimation. "
+             "Separates within-replica (finite-trajectory) from between-replica "
+             "(Wigner-initial-condition) uncertainty. Default: disabled.",
     )
     parser.add_argument("--exclude-lowest", type=int, default=3)
     parser.add_argument("--min-effective-replicas", type=float, default=None)
@@ -1149,6 +1275,11 @@ def main():
         for line in _active_lines((template / "run.in").read_text(encoding="utf-8"))
     ):
         raise ValueError("--workflow hnemd requires an active compute_hnemd command")
+    if workflow == "sdc" and not any(
+        re.match(r"^\s*compute_sdc\b", line)
+        for line in _active_lines((template / "run.in").read_text(encoding="utf-8"))
+    ):
+        raise ValueError("--workflow sdc requires an active compute_sdc command")
     if workflow == "dos" and not any(
         re.match(r"^\s*compute_dos\b", line)
         for line in _active_lines((template / "run.in").read_text(encoding="utf-8"))
@@ -1341,7 +1472,11 @@ def main():
             output / "hac_merge_manifest.json",
             min_effective,
             max_weight,
+            args.block_size,
         )
+    if workflow == "sdc":
+        sdc_files = [path / "sdc.out" for path in run_dirs]
+        merge_sdc(sdc_files, summary_files, output / "sdc.out", replica_ids)
     if workflow == "dos":
         dos_files = [path / "dos.out" for path in run_dirs]
         merge_dos(dos_files, summary_files, output / "dos.out", replica_ids)

@@ -579,3 +579,86 @@ use 0.05 fs or smaller.
    (Anharmonic reweighting for Wigner sampling)
 4. See also: `tools/qct/SEMICLASSICAL_ROADMAP.md` for the broader semiclassical
    methods roadmap in GPUMD.
+
+## P2 Features (Advanced)
+
+### Symmetric (Backward) Correlation — `--symmetric`
+
+By default, `lsc_ivr.py` computes one-sided correlations `C(t) = <A(0) B(t)>`.
+The `--symmetric` flag computes the symmetric (centered) form:
+
+```
+C(t) = <A(-t/2) B(t/2)>
+```
+
+This uses trajectory midpoint splitting: each replica's trajectory is split at
+the midpoint, and the "backward" half (before midpoint) is paired with the
+"forward" half (after midpoint). This form has better statistical properties
+for symmetric operators and reduces systematic bias.
+
+```bash
+python lsc_ivr.py --trajectory qct_trajectory.xyz --summary qct_initial_summary.csv \
+    --config operators.json --output corr.csv --symmetric
+```
+
+### Adaptive Timestep — `--adaptive-timestep`
+
+Recommends an MD timestep based on the fastest vibrational mode in the Hessian:
+
+```bash
+python lsc_ivr.py --trajectory dummy.xyz --adaptive-timestep qct_hessian.out \
+    --steps-per-period 20
+```
+
+The rule of thumb is `dt = period / steps_per_period`, where `period = 1000 / f_max`
+(in fs, with `f_max` in THz). The result is clamped to `[0.01, 1.0]` fs by default.
+
+### Mode-Resolved Correlations — `--mode-correlations`
+
+Computes per-mode position autocorrelations `C_k(t) = <Q_k(0) Q_k(t)>`:
+
+```bash
+python lsc_ivr.py --trajectory qct_trajectory.xyz --summary qct_initial_summary.csv \
+    --mode-correlations qct_eigenvector.out \
+    --mode-masses masses.txt \
+    --mode-output mode_correlations.csv
+```
+
+The normal-mode coordinate is computed as `Q_k = Σ_i sqrt(m_i) * e_ik · r_i`,
+where `e_ik` is the mass-weighted eigenvector for mode `k` and atom `i`.
+
+### Blockwise HAC Uncertainty — `--block-size`
+
+For thermal conductivity via `run_multigpu.py`, the `--block-size` flag enables
+blockwise uncertainty estimation in the HAC merge:
+
+```bash
+python run_multigpu.py --template run_dir --gpumd gpumd --total-replicas 5 \
+    --workflow hac --block-size 100 --output merged/
+```
+
+This separates two sources of uncertainty:
+1. **Between-replica** (Wigner initial condition): standard error across replicas.
+2. **Within-replica** (finite trajectory): block variance from non-overlapping
+   time blocks of `block_size` rows each.
+
+The `hac_uncertainty.csv` file includes `block_se_*` and `combined_se_*` columns
+in addition to the existing between-replica `se_*` columns.
+
+### SDC Workflow
+
+The `compute_sdc` keyword is now detected as the `sdc` workflow. Multi-GPU runs
+with `compute_sdc` will automatically merge `sdc.out` files with Wigner weighting:
+
+```bash
+python run_multigpu.py --template run_dir --gpumd gpumd --total-replicas 5 \
+    --workflow sdc --output merged/
+```
+
+### T=0 Ground-State Wigner Sampling
+
+At temperature `T = 0`, the Wigner distribution reduces to the harmonic ground
+state (zero-point motion only). The `coth(βℏω/2)` factor becomes `1.0`,
+giving `σ_Q² = ℏ/(2ω)` and `σ_P² = ℏω/2`. The LSC-IVR ensemble handles this
+case automatically when `temperature` is set to `0` in `run.in`. HAC blocking
+at `T = 0` is correct behavior (zero-point energy only).
