@@ -662,3 +662,84 @@ state (zero-point motion only). The `coth(βℏω/2)` factor becomes `1.0`,
 giving `σ_Q² = ℏ/(2ω)` and `σ_P² = ℏω/2`. The LSC-IVR ensemble handles this
 case automatically when `temperature` is set to `0` in `run.in`. HAC blocking
 at `T = 0` is correct behavior (zero-point energy only).
+
+## FB-LSC-IVR: Forward-Backward Form
+
+### Theory
+
+The Forward-Backward (FB) form of LSC-IVR uses the symmetric correlation:
+
+```
+C_FB(t) = <A(-t/2) B(t/2)>
+```
+
+instead of the standard one-sided form:
+
+```
+C(t) = <A(0) B(t)>
+```
+
+For **real autocorrelations** (where A = B), the FB form is mathematically
+identical to the one-sided form because the autocorrelation is an even function
+of time. The FB form's benefit is **statistical**: it reduces systematic bias
+for short trajectories and symmetric operators.
+
+### Two implementations
+
+#### 1. Trajectory-based (molecular observables)
+
+For position, velocity, dipole, and kinetic energy correlations, the FB form
+is computed from QCT trajectory dumps via midpoint splitting:
+
+```bash
+python lsc_ivr.py --trajectory qct_trajectory.xyz \
+    --summary qct_initial_summary.csv \
+    --config operators.json \
+    --output fb_correlation.csv \
+    --symmetric
+```
+
+This is a pure post-processing operation — no C++ changes are needed.
+
+#### 2. HAC-based (thermal conductivity)
+
+For thermal conductivity via Green-Kubo, GPUMD's `compute_hac` already
+performs multi-time-origin averaging (all possible time origins), which
+subsumes the statistical benefit of the FB form. The `fb_lsc_ivr.py` tool
+reads `hac.out` files and provides:
+
+- Wigner-weighted multi-replica merge
+- Blockwise uncertainty (between-replica vs. within-trajectory)
+- Symmetric Green-Kubo integration with convergence analysis
+
+```bash
+python fb_lsc_ivr.py --hac replica_0/hac.out replica_1/hac.out \
+    --summary replica_0/qct_initial_summary.csv replica_1/qct_initial_summary.csv \
+    --block-size 100 \
+    --output fb_kappa.csv \
+    --manifest fb_manifest.json
+```
+
+Output CSV columns:
+- `time_ps`, `kappa_x/y/z/avg`
+- `se_kappa_x/y/z/avg` (between-replica uncertainty)
+- `block_se_kappa_avg` (within-trajectory block uncertainty)
+- `combined_se_kappa_avg` (total uncertainty)
+
+### When to use FB vs. one-sided
+
+| Use case | Recommendation | Reason |
+|----------|----------------|--------|
+| Thermal conductivity (HAC) | Either (equivalent) | GPUMD's multi-origin averaging already captures FB benefit |
+| Molecular spectra (short traj) | FB (`--symmetric`) | Better statistics for short trajectories |
+| Molecular spectra (long traj) | Either | Multi-origin averaging in `compute_correlation` is sufficient |
+| Mode-resolved correlations | Either | Both use the same trajectory data |
+
+### Limitations
+
+- The FB trajectory form reduces maximum correlation time by half
+  (midpoint splitting requires frames on both sides)
+- For HAC-based thermal conductivity, the FB form is mathematically
+  identical to the one-sided form for real autocorrelations
+- True FB trajectory propagation (forward then backward integration)
+  is only needed for SC-IVR/FBTS, not for LSC-IVR
