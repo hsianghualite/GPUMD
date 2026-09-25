@@ -34,8 +34,33 @@ heat transport, Phys. Rev. B. 104, 104309 (2021).
 #include <fstream>
 #include <iostream>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
+
+namespace {
+int small_box_neighbor_capacity(const int num_atoms, const NEP::ExpandedBox& ebox)
+{
+  if (num_atoms <= 0) {
+    return 0;
+  }
+  size_t capacity = static_cast<size_t>(num_atoms);
+  for (int axis = 0; axis < 3; ++axis) {
+    const int count = ebox.num_cells[axis];
+    if (count <= 0 ||
+        capacity > std::numeric_limits<size_t>::max() / static_cast<size_t>(count)) {
+      std::cerr << "The expanded small-box periodic-image count is invalid.\n";
+      exit(1);
+    }
+    capacity *= static_cast<size_t>(count);
+  }
+  if (capacity > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    std::cerr << "The expanded small-box neighbor list exceeds the index range.\n";
+    exit(1);
+  }
+  return static_cast<int>(capacity);
+}
+} // namespace
 
 const std::string ELEMENTS[NUM_ELEMENTS] = {
   "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne", "Na", "Mg", "Al", "Si", "P",  "S",
@@ -1033,8 +1058,9 @@ void NEP::compute_small_box(
   const int N = type.size();
   const int grid_size = (N2 - N1 - 1) / BLOCK_SIZE + 1;
 
-  const int big_neighbor_size = 2000;
-  const int size_x12 = type.size() * big_neighbor_size;
+  const int neighbor_capacity = static_cast<int>(
+    small_box_data.NL_radial.size() / static_cast<size_t>(N));
+  const int size_x12 = N * neighbor_capacity;
 
   find_neighbor_list_small_box<<<grid_size, BLOCK_SIZE>>>(
     paramb,
@@ -1241,15 +1267,22 @@ void NEP::compute(
   if (is_small_box) {
     // update small_box_data
     const int current_num_atoms = type.size();
-    if (small_box_data.NN_radial.size() != current_num_atoms) {
-        const int big_neighbor_size = 2000;
-        const int size_x12 = current_num_atoms * big_neighbor_size;
-
-        small_box_data.NN_radial.resize(current_num_atoms);
-        small_box_data.NL_radial.resize(size_x12);
-        small_box_data.NN_angular.resize(current_num_atoms);
-        small_box_data.NL_angular.resize(size_x12);
-        small_box_data.r12.resize(size_x12 * 6);
+    const int required_neighbor_capacity =
+      small_box_neighbor_capacity(current_num_atoms, ebox);
+    const size_t current_neighbor_capacity = current_num_atoms > 0
+      ? small_box_data.NL_radial.size() / static_cast<size_t>(current_num_atoms)
+      : 0;
+    if (small_box_data.NN_radial.size() != static_cast<size_t>(current_num_atoms) ||
+        current_neighbor_capacity < static_cast<size_t>(required_neighbor_capacity) ||
+        small_box_data.NL_angular.size() <
+          static_cast<size_t>(current_num_atoms) * required_neighbor_capacity) {
+      const size_t size_x12 =
+        static_cast<size_t>(current_num_atoms) * required_neighbor_capacity;
+      small_box_data.NN_radial.resize(current_num_atoms);
+      small_box_data.NL_radial.resize(size_x12);
+      small_box_data.NN_angular.resize(current_num_atoms);
+      small_box_data.NL_angular.resize(size_x12);
+      small_box_data.r12.resize(size_x12 * 6);
     }
 
     compute_small_box(
@@ -1548,8 +1581,9 @@ void NEP::compute_small_box(
   const int N = type.size();
   const int grid_size = (N2 - N1 - 1) / BLOCK_SIZE + 1;
 
-  const int big_neighbor_size = 2000;
-  const int size_x12 = type.size() * big_neighbor_size;
+  const int neighbor_capacity = static_cast<int>(
+    small_box_data.NL_radial.size() / static_cast<size_t>(N));
+  const int size_x12 = N * neighbor_capacity;
 
   find_neighbor_list_small_box<<<grid_size, BLOCK_SIZE>>>(
     paramb,
@@ -1698,15 +1732,22 @@ void NEP::compute(
   if (is_small_box) {
     // update small_box_data
     const int current_num_atoms = type.size();
-    if (small_box_data.NN_radial.size() != current_num_atoms) {
-        const int big_neighbor_size = 2000;
-        const int size_x12 = current_num_atoms * big_neighbor_size;
-
-        small_box_data.NN_radial.resize(current_num_atoms);
-        small_box_data.NL_radial.resize(size_x12);
-        small_box_data.NN_angular.resize(current_num_atoms);
-        small_box_data.NL_angular.resize(size_x12);
-        small_box_data.r12.resize(size_x12 * 6);
+    const int required_neighbor_capacity =
+      small_box_neighbor_capacity(current_num_atoms, ebox);
+    const size_t current_neighbor_capacity = current_num_atoms > 0
+      ? small_box_data.NL_radial.size() / static_cast<size_t>(current_num_atoms)
+      : 0;
+    if (small_box_data.NN_radial.size() != static_cast<size_t>(current_num_atoms) ||
+        current_neighbor_capacity < static_cast<size_t>(required_neighbor_capacity) ||
+        small_box_data.NL_angular.size() <
+          static_cast<size_t>(current_num_atoms) * required_neighbor_capacity) {
+      const size_t size_x12 =
+        static_cast<size_t>(current_num_atoms) * required_neighbor_capacity;
+      small_box_data.NN_radial.resize(current_num_atoms);
+      small_box_data.NL_radial.resize(size_x12);
+      small_box_data.NN_angular.resize(current_num_atoms);
+      small_box_data.NL_angular.resize(size_x12);
+      small_box_data.r12.resize(size_x12 * 6);
     }
 
     compute_small_box(
