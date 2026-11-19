@@ -8,16 +8,16 @@
 */
 
 /*----------------------------------------------------------------------------80
-Finite-difference normal modes for one isolated molecular structure.
+Normal modes for QCT initial-condition sampling.
 
-Unlike the phonon Hessian, this class does not use a supercell or k-points.
-It evaluates one complete force vector for each positive and negative
-Cartesian displacement, which is the appropriate O(N) force-evaluation path
-for QCT initial-condition sampling.
+The automatic QCT path uses the analytic NEP Hessian. A finite-difference
+implementation remains available for callers that require it, but QCT never
+falls back to it: an unsupported potential or an analytic failure is fatal.
 ------------------------------------------------------------------------------*/
 
 #pragma once
 #include <memory>
+#include <string>
 #include <vector>
 
 class Atom;
@@ -55,12 +55,11 @@ public:
     Atom& atom,
     std::vector<Group>& group);
 
-  static Molecular_Hessian_Result compute(
-    double displacement,
-    Force& force,
-    Box& box,
-    Atom& atom,
-    std::vector<Group>& group);
+  static Molecular_Hessian_Result
+  compute(double displacement, Force& force, Box& box, Atom& atom, std::vector<Group>& group);
+
+  static Molecular_Hessian_Result compute_analytic(
+    const std::string& potential_filename, bool dftd3_enabled, Force& force, Box& box, Atom& atom);
 
   static void write_qct_audit(const Molecular_Hessian_Result& result, const Atom& atom);
 
@@ -76,12 +75,8 @@ public:
     std::vector<double>& velocities);
 
 private:
-  static Molecular_Hessian_Result compute_cpu(
-    double displacement,
-    Force& force,
-    Box& box,
-    Atom& atom,
-    std::vector<Group>& group);
+  static Molecular_Hessian_Result
+  compute_cpu(double displacement, Force& force, Box& box, Atom& atom, std::vector<Group>& group);
 
   static Molecular_Hessian_Result compute_device(
     const Molecular_Hessian_Options& options,

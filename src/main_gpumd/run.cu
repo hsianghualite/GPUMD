@@ -295,7 +295,8 @@ void Run::perform_a_run(const int number_of_steps)
 
   printf("Time used for this run = %g second.\n", time_used.count());
   double run_speed = atom.number_of_atoms * (number_of_steps * 1.0 / time_used.count());
-  double speed_ns_day = (global_time * TIME_UNIT_CONVERSION / 1000000.0) * (86400.0 / time_used.count());
+  double speed_ns_day =
+    (global_time * TIME_UNIT_CONVERSION / 1000000.0) * (86400.0 / time_used.count());
   printf("Speed of this run = %g atom*step/second (%g ns/day).\n", run_speed, speed_ns_day);
   print_line_2();
 
@@ -314,8 +315,8 @@ void Run::perform_a_run(const int number_of_steps)
 void Run::validate_qct_batch_configuration() const
 {
   if (qct_batch_run_completed) {
-    PRINT_INPUT_ERROR(
-      "A native QCT/LSC-IVR batch run already completed; no subsequent run is allowed in the same process.");
+    PRINT_INPUT_ERROR("A native QCT/LSC-IVR batch run already completed; no subsequent run is "
+                      "allowed in the same process.");
   }
 
   const auto* qct = dynamic_cast<const Ensemble_QCT*>(&integrate.get_ensemble());
@@ -324,18 +325,18 @@ void Run::validate_qct_batch_configuration() const
   }
 
   if (simulation_run_completed) {
-    PRINT_INPUT_ERROR(
-      "Native QCT/LSC-IVR batch must be the first run in a process; use a separate process after other runs.");
+    PRINT_INPUT_ERROR("Native QCT/LSC-IVR batch must be the first run in a process; use a separate "
+                      "process after other runs.");
   }
 
   if (box.pbc_x || box.pbc_y || box.pbc_z) {
-    PRINT_INPUT_ERROR(
-      "QCT/LSC-IVR native periodic batch is disabled until replica-isolated periodic images are implemented.");
+    PRINT_INPUT_ERROR("QCT/LSC-IVR native periodic batch is disabled until replica-isolated "
+                      "periodic images are implemented.");
   }
 
   if (velocity.do_velocity_correction) {
-    PRINT_INPUT_ERROR(
-      "QCT batch does not support correct_velocity; momentum correction must be performed per replica.");
+    PRINT_INPUT_ERROR("QCT batch does not support correct_velocity; momentum correction must be "
+                      "performed per replica.");
   }
 
   const std::vector<std::string> unsupported_actions = {
@@ -350,8 +351,7 @@ void Run::validate_qct_batch_configuration() const
     "mc"};
   for (const auto& action : unsupported_actions) {
     if (measure.has_action(action)) {
-      PRINT_INPUT_ERROR(
-        ("QCT batch does not support the '" + action + "' action.").c_str());
+      PRINT_INPUT_ERROR(("QCT batch does not support the '" + action + "' action.").c_str());
     }
   }
 
@@ -411,7 +411,8 @@ void Run::parse_one_keyword(const std::vector<std::string>& tokens, const RunInp
   } else if (tokens[0] == "velocity") {
     parse_velocity(tokens);
   } else if (tokens[0] == "ensemble") {
-    integrate.parse_ensemble(tokens, atom, box, group, force);
+    integrate.parse_ensemble(
+      tokens, atom, box, group, force, first_potential_filename_, run_input.contains("dftd3"));
   } else if (tokens[0] == "time_step") {
     parse_time_step(tokens);
   } else if (tokens[0] == "correct_velocity") {

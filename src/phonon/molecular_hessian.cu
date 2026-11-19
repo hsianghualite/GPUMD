@@ -7,11 +7,14 @@
     (at your option) any later version.
 */
 
-#include "molecular_hessian.cuh"
 #include "force/force.cuh"
+#include "force/nep/nep_multigpu.cuh"
 #include "model/atom.cuh"
 #include "model/box.cuh"
 #include "model/group.cuh"
+#include "molecular_hessian.cuh"
+#include "nep_analytic_hessian.cuh"
+#include "nep_hessian_model.cuh"
 #include "utilities/common.cuh"
 #include "utilities/cusolver_wrapper.cuh"
 #include "utilities/error.cuh"
@@ -133,8 +136,8 @@ std::vector<std::vector<double>> build_rigid_basis(const Atom& atom, const Box& 
   return basis;
 }
 
-std::vector<double> build_vibrational_complement(
-  int dimension, const std::vector<std::vector<double>>& rigid_basis)
+std::vector<double>
+build_vibrational_complement(int dimension, const std::vector<std::vector<double>>& rigid_basis)
 {
   std::vector<std::vector<double>> all_basis = rigid_basis;
   const int vibrational_dimension = dimension - static_cast<int>(rigid_basis.size());
@@ -144,8 +147,9 @@ std::vector<double> build_vibrational_complement(
     std::vector<double> vector(dimension, 0.0);
     vector[unit] = 1.0;
     const int before = static_cast<int>(all_basis.size());
-    if (append_orthonormal(std::move(vector), all_basis) &&
-        static_cast<int>(all_basis.size()) > before) {
+    if (
+      append_orthonormal(std::move(vector), all_basis) &&
+      static_cast<int>(all_basis.size()) > before) {
       const auto& normalized = all_basis.back();
       for (int row = 0; row < dimension; ++row) {
         complement[row + dimension * column] = normalized[row];
@@ -179,10 +183,8 @@ void evaluate_force(
   atom.force_per_atom.copy_to_host(force_cpu.data());
 }
 
-Molecular_Hessian_Result finish_hessian(
-  Molecular_Hessian_Result result,
-  const Box& box,
-  const Atom& atom)
+Molecular_Hessian_Result
+finish_hessian(Molecular_Hessian_Result result, const Box& box, const Atom& atom)
 {
   const int number_of_atoms = atom.number_of_atoms;
   const int dimension = number_of_atoms * 3;
@@ -212,7 +214,8 @@ Molecular_Hessian_Result finish_hessian(
     PRINT_INPUT_ERROR("QCT Hessian has no vibrational degrees of freedom.\n");
   }
   const std::vector<double> complement = build_vibrational_complement(dimension, rigid_basis);
-  std::vector<double> projected(static_cast<size_t>(vibrational_dimension) * vibrational_dimension, 0.0);
+  std::vector<double> projected(
+    static_cast<size_t>(vibrational_dimension) * vibrational_dimension, 0.0);
   std::vector<double> temporary(static_cast<size_t>(dimension) * vibrational_dimension, 0.0);
   for (int column = 0; column < vibrational_dimension; ++column) {
     for (int row = 0; row < dimension; ++row) {
@@ -237,10 +240,7 @@ Molecular_Hessian_Result finish_hessian(
   std::vector<double> projected_eigenvectors(
     static_cast<size_t>(vibrational_dimension) * vibrational_dimension, 0.0);
   eigenvectors_symmetric_Jacobi(
-    vibrational_dimension,
-    projected.data(),
-    omega2_natural.data(),
-    projected_eigenvectors.data());
+    vibrational_dimension, projected.data(), omega2_natural.data(), projected_eigenvectors.data());
 
   result.omega2_THz2.assign(dimension, 0.0);
   result.eigenvectors.assign(static_cast<size_t>(dimension) * dimension, 0.0);
@@ -265,8 +265,9 @@ Molecular_Hessian_Result finish_hessian(
   for (int mode = 0; mode < dimension; ++mode) {
     int largest_component = 0;
     for (int row = 1; row < dimension; ++row) {
-      if (std::fabs(result.eigenvectors[row + dimension * mode]) >
-          std::fabs(result.eigenvectors[largest_component + dimension * mode])) {
+      if (
+        std::fabs(result.eigenvectors[row + dimension * mode]) >
+        std::fabs(result.eigenvectors[largest_component + dimension * mode])) {
         largest_component = row;
       }
     }
@@ -289,8 +290,9 @@ Molecular_Hessian_Result finish_full_periodic_hessian(
   const int dimension = atom.number_of_atoms * 3;
   const auto rigid_basis = build_rigid_basis(atom, box);
   result.number_of_rigid_modes = static_cast<int>(rigid_basis.size());
-  if (result.number_of_rigid_modes != 3 || static_cast<int>(eigenvalues.size()) != dimension ||
-      eigenvectors.size() != static_cast<size_t>(dimension) * dimension) {
+  if (
+    result.number_of_rigid_modes != 3 || static_cast<int>(eigenvalues.size()) != dimension ||
+    eigenvectors.size() != static_cast<size_t>(dimension) * dimension) {
     PRINT_INPUT_ERROR("Full periodic QCT Hessian returned an invalid eigensystem.\n");
   }
   std::vector<int> order(dimension);
@@ -303,7 +305,7 @@ Molecular_Hessian_Result finish_full_periodic_hessian(
   std::vector<bool> rigid_source(dimension, false);
   // Validate that the modes selected as rigid are actually near-zero.
   // A real soft mode with small |omega2| should not be misclassified.
-  const double rigid_threshold = 1.0e-6;  // natural units (rad/ps)^2
+  const double rigid_threshold = 1.0e-6; // natural units (rad/ps)^2
   for (int mode = 0; mode < result.number_of_rigid_modes; ++mode) {
     const double omega2 = eigenvalues[order[mode]];
     if (std::fabs(omega2) > rigid_threshold) {
@@ -312,7 +314,9 @@ Molecular_Hessian_Result finish_full_periodic_hessian(
         "QCT periodic Hessian: mode %d has |omega2|=%.6g which exceeds the "
         "rigid-mode threshold %.6g; the structure may not be at a stationary "
         "point or the Hessian may be ill-conditioned.\n",
-        order[mode], std::fabs(omega2), rigid_threshold);
+        order[mode],
+        std::fabs(omega2),
+        rigid_threshold);
       PRINT_INPUT_ERROR(
         "Rigid-mode identification failed: a selected rigid mode is not near-zero.");
     }
@@ -334,16 +338,16 @@ Molecular_Hessian_Result finish_full_periodic_hessian(
     }
     result.omega2_THz2[destination] = eigenvalues[source] * natural_to_THz2;
     for (int row = 0; row < dimension; ++row) {
-      result.eigenvectors[row + dimension * destination] =
-        eigenvectors[row + dimension * source];
+      result.eigenvectors[row + dimension * destination] = eigenvectors[row + dimension * source];
     }
     ++destination;
   }
   for (int mode = 0; mode < dimension; ++mode) {
     int largest_component = 0;
     for (int row = 1; row < dimension; ++row) {
-      if (std::fabs(result.eigenvectors[row + dimension * mode]) >
-          std::fabs(result.eigenvectors[largest_component + dimension * mode])) {
+      if (
+        std::fabs(result.eigenvectors[row + dimension * mode]) >
+        std::fabs(result.eigenvectors[largest_component + dimension * mode])) {
         largest_component = row;
       }
     }
@@ -356,7 +360,8 @@ Molecular_Hessian_Result finish_full_periodic_hessian(
   return result;
 }
 
-__global__ void qct_hessian_add_coordinate(double* position, const int coordinate, const double delta)
+__global__ void
+qct_hessian_add_coordinate(double* position, const int coordinate, const double delta)
 {
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     position[coordinate] += delta;
@@ -373,8 +378,7 @@ __global__ void qct_hessian_difference_column(
 {
   const int row = blockIdx.x * blockDim.x + threadIdx.x;
   if (row < dimension) {
-    hessian[row + dimension * column] =
-      (force_negative[row] - force_positive[row]) * scale;
+    hessian[row + dimension * column] = (force_negative[row] - force_positive[row]) * scale;
   }
 }
 
@@ -388,17 +392,14 @@ __global__ void qct_hessian_symmetrize(double* hessian, const int dimension)
     return;
   }
   const int row = column + 1 + row_base;
-  const double value = 0.5 *
-    (hessian[row + dimension * column] + hessian[column + dimension * row]);
+  const double value =
+    0.5 * (hessian[row + dimension * column] + hessian[column + dimension * row]);
   hessian[row + dimension * column] = value;
   hessian[column + dimension * row] = value;
 }
 
 __global__ void qct_hessian_mass_weight(
-  double* matrix,
-  const double* mass,
-  const int number_of_atoms,
-  const int dimension)
+  double* matrix, const double* mass, const int number_of_atoms, const int dimension)
 {
   const int index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= dimension * dimension) {
@@ -455,14 +456,13 @@ void qct_hessian_progress(
   if (!options.report_progress) {
     return;
   }
-  const int interval = options.progress_interval > 0
-                         ? options.progress_interval
-                         : std::max(1, (dimension + 11) / 12);
+  const int interval =
+    options.progress_interval > 0 ? options.progress_interval : std::max(1, (dimension + 11) / 12);
   if (completed != 1 && completed != dimension && completed % interval != 0) {
     return;
   }
-  const double elapsed = std::chrono::duration<double>(
-    std::chrono::steady_clock::now() - start).count();
+  const double elapsed =
+    std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   const double eta = completed > 0 ? elapsed * (dimension - completed) / completed : 0.0;
   std::printf(
     "Hessian progress: finite_difference %d/%d columns (%.2f%%), "
@@ -479,8 +479,7 @@ void qct_hessian_progress(
 } // namespace
 
 Molecular_Hessian_Device_Data::Molecular_Hessian_Device_Data(
-  const GPU_Vector<double>& eigenvectors_in,
-  const int dimension_in)
+  const GPU_Vector<double>& eigenvectors_in, const int dimension_in)
   : eigenvectors(eigenvectors_in.size()), dimension(dimension_in)
 {
   eigenvectors.copy_from_device(eigenvectors_in.data());
@@ -496,11 +495,12 @@ void Molecular_Hessian_Device_Data::sample(
   std::vector<double>& positions,
   std::vector<double>& velocities) const
 {
-  if (dimension != number_of_atoms * 3 || q_coefficients.size() !=
-        static_cast<size_t>(dimension) * replicas ||
-      p_coefficients.size() != q_coefficients.size() ||
-      reference_position.size() != static_cast<size_t>(dimension) ||
-      mass.size() != static_cast<size_t>(number_of_atoms)) {
+  if (
+    dimension != number_of_atoms * 3 ||
+    q_coefficients.size() != static_cast<size_t>(dimension) * replicas ||
+    p_coefficients.size() != q_coefficients.size() ||
+    reference_position.size() != static_cast<size_t>(dimension) ||
+    mass.size() != static_cast<size_t>(number_of_atoms)) {
     PRINT_INPUT_ERROR("Invalid dimensions passed to GPU QCT mode sampling.\n");
   }
   GPU_Vector<double> q_device(q_coefficients.size());
@@ -515,9 +515,7 @@ void Molecular_Hessian_Device_Data::sample(
   mass_device.copy_from_host(mass.data());
   reference_device.copy_from_host(reference_position.data());
   const int block_size = 256;
-  qct_mode_accumulate<<<
-    (device_size + block_size - 1) / block_size,
-    block_size>>>(
+  qct_mode_accumulate<<<(device_size + block_size - 1) / block_size, block_size>>>(
     eigenvectors.data(),
     q_device.data(),
     p_device.data(),
@@ -562,11 +560,7 @@ void Molecular_Hessian::sample_device(
 }
 
 Molecular_Hessian_Result Molecular_Hessian::compute_cpu(
-  const double displacement,
-  Force& force,
-  Box& box,
-  Atom& atom,
-  std::vector<Group>& group)
+  const double displacement, Force& force, Box& box, Atom& atom, std::vector<Group>& group)
 {
   if (displacement <= 0.0) {
     PRINT_INPUT_ERROR("QCT Hessian displacement should be positive.\n");
@@ -630,8 +624,8 @@ Molecular_Hessian_Result Molecular_Hessian::compute_device(
   size_t free_memory = 0;
   size_t total_memory = 0;
   CHECK(gpuMemGetInfo(&free_memory, &total_memory));
-  const size_t requested = dense_elements * 2 * sizeof(double) +
-                          static_cast<size_t>(dimension) * 5 * sizeof(double);
+  const size_t requested =
+    dense_elements * 2 * sizeof(double) + static_cast<size_t>(dimension) * 5 * sizeof(double);
   if (free_memory < requested) {
     std::fprintf(
       stderr,
@@ -773,15 +767,14 @@ Molecular_Hessian_Result Molecular_Hessian::compute_device(
   // reordering is complete.
   std::printf("Hessian progress: mode_reconstruction complete\n");
   std::fflush(stdout);
-  result = finish_full_periodic_hessian(
-    std::move(result), box, atom, omega2_natural, eigenvectors);
+  result = finish_full_periodic_hessian(std::move(result), box, atom, omega2_natural, eigenvectors);
   // Now upload the reordered eigenvector basis to the device so that the
   // GPU sampling kernel uses the same column order as qct_modes.modes.
   if (result.eigenvectors.size() == static_cast<size_t>(dimension) * dimension) {
     GPU_Vector<double> reordered_eigenvectors_device(result.eigenvectors.size());
     reordered_eigenvectors_device.copy_from_host(result.eigenvectors.data());
-    result.device_data = std::make_shared<Molecular_Hessian_Device_Data>(
-      reordered_eigenvectors_device, dimension);
+    result.device_data =
+      std::make_shared<Molecular_Hessian_Device_Data>(reordered_eigenvectors_device, dimension);
     result.device_data->set_num_rigid_modes(result.number_of_rigid_modes);
   }
   return result;
@@ -809,15 +802,110 @@ Molecular_Hessian_Result Molecular_Hessian::compute(
 }
 
 Molecular_Hessian_Result Molecular_Hessian::compute(
-  const double displacement,
-  Force& force,
-  Box& box,
-  Atom& atom,
-  std::vector<Group>& group)
+  const double displacement, Force& force, Box& box, Atom& atom, std::vector<Group>& group)
 {
   Molecular_Hessian_Options options;
   options.displacement = displacement;
   return compute(options, force, box, atom, group);
+}
+
+Molecular_Hessian_Result Molecular_Hessian::compute_analytic(
+  const std::string& potential_filename,
+  const bool dftd3_enabled,
+  Force& force,
+  Box& box,
+  Atom& atom)
+{
+  if (atom.number_of_atoms < 2) {
+    PRINT_INPUT_ERROR("QCT/LSC-IVR automatic Hessian requires at least two atoms.\n");
+  }
+  if (force.get_number_of_potentials() != 1) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian requires exactly one potential.\n");
+  }
+  auto& potential = force.get_potential(0);
+  if (dynamic_cast<NEP_MULTIGPU*>(&potential) != nullptr) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian does not support NEP_MULTIGPU; use single-GPU NEP.\n");
+  }
+  auto* nep = dynamic_cast<NEP*>(&potential);
+  if (nep == nullptr) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian requires an ordinary single-GPU NEP potential.\n");
+  }
+  if (nep->nep_model_type == 3) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian does not support temperature-dependent NEP models.\n");
+  }
+  if (nep->nep_model_type != 0) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian supports only ordinary NEP energy models.\n");
+  }
+  if (nep->ilp_flag != 0) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian does not support NEP with ILP.\n");
+  }
+  if (dftd3_enabled) {
+    PRINT_INPUT_ERROR("QCT automatic Hessian does not support the DFT-D3 dispersion correction.\n");
+  }
+  if (potential_filename.empty()) {
+    PRINT_INPUT_ERROR("QCT/LSC-IVR automatic Hessian could not locate the potential file.\n");
+  }
+
+  // The analytic backend evaluates the device geometry. Keep the host copy used
+  // for the reference structure, rigid-mode basis, and audit output in sync so
+  // that an earlier minimize command cannot desynchronize the two.
+  atom.position_per_atom.copy_to_host(atom.cpu_position_per_atom.data());
+
+  std::printf("Hessian backend: analytic NEP Hessian.\n");
+  std::fflush(stdout);
+
+  NEP_Hessian_Model model;
+  model.initialize(potential_filename.c_str());
+
+  const int number_of_atoms = atom.number_of_atoms;
+  const int dimension = number_of_atoms * 3;
+  std::vector<double> analytic_hessian;
+  std::vector<double> analytic_force;
+  double potential_energy = 0.0;
+  nep_hessian::Diagnostics diagnostics;
+  std::string error;
+  const bool passed = compute_nep_analytic_hessian(
+    force,
+    model,
+    box,
+    atom,
+    analytic_hessian,
+    analytic_force,
+    potential_energy,
+    diagnostics,
+    error);
+  if (!passed) {
+    if (error.empty()) {
+      error = "Analytic NEP Hessian failed.";
+    }
+    PRINT_INPUT_ERROR(error.c_str());
+  }
+  if (
+    analytic_hessian.size() != static_cast<size_t>(dimension) * dimension ||
+    analytic_force.size() != static_cast<size_t>(dimension)) {
+    PRINT_INPUT_ERROR("Analytic NEP Hessian returned an inconsistent matrix or force array.\n");
+  }
+
+  Molecular_Hessian_Result result;
+  result.number_of_atoms = number_of_atoms;
+  for (const double component : analytic_force) {
+    result.max_force = std::max(result.max_force, std::fabs(component));
+  }
+  result.hessian.assign(static_cast<size_t>(dimension) * dimension, 0.0);
+  // The analytic backend returns a row-major SoA matrix. QCT and the
+  // finite-difference path use column-major storage.
+  for (int row = 0; row < dimension; ++row) {
+    for (int column = 0; column < dimension; ++column) {
+      result.hessian[row + dimension * column] = analytic_hessian[row * dimension + column];
+    }
+  }
+
+  result = finish_hessian(std::move(result), box, atom);
+  GPU_Vector<double> eigenvectors(result.eigenvectors.size());
+  eigenvectors.copy_from_host(result.eigenvectors.data());
+  result.device_data = std::make_shared<Molecular_Hessian_Device_Data>(eigenvectors, dimension);
+  result.device_data->set_num_rigid_modes(result.number_of_rigid_modes);
+  return result;
 }
 
 void Molecular_Hessian::write_qct_audit(const Molecular_Hessian_Result& result, const Atom& atom)

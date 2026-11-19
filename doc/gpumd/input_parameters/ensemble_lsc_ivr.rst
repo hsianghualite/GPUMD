@@ -27,11 +27,11 @@ those accepted by ``ensemble qct wigner``.
 
 Example: quantum-corrected thermal conductivity of a Si crystal::
 
-    ensemble lsc_ivr 300 seed 12345 replicas 1 hessian_displacement 0.001 anharmonic_reweighting no
+    ensemble lsc_ivr 300 seed 12345 replicas 1 anharmonic_reweighting no
 
 Example: ground-state Wigner for a molecular system without PBC::
 
-    ensemble lsc_ivr 0 seed 42 replicas 64 hessian_displacement 0.001 anharmonic_reweighting no
+    ensemble lsc_ivr 0 seed 42 replicas 64 anharmonic_reweighting no
 
 Parameters
 ----------
@@ -51,13 +51,12 @@ All parameters accepted by ``ensemble qct wigner`` are also accepted by
   supported because batch expansion would require replicating the supercell.
 
 ``hessian_displacement``
-  Finite-difference displacement for the automatic Hessian (default: 0.001 Å).
+  Retained only for backward compatibility. The automatic Hessian is analytic
+  and ignores this keyword.
 
 ``hessian_progress`` / ``hessian_progress_interval``
-  Control automatic Hessian progress output. Progress is enabled by default;
-  interval ``0`` selects about 12 adaptive updates; the first and last columns
-  are always reported.
-  CUDA periodic systems use the device finite-difference Hessian path.
+  Retained only for backward compatibility. The analytic Hessian backend
+  ignores both keywords.
 
 ``min_frequency``
   Minimum active-mode frequency in THz (default: 0.001).  Modes below this
@@ -73,6 +72,14 @@ All parameters accepted by ``ensemble qct wigner`` are also accepted by
   Number of lowest-frequency modes to exclude as rigid (default: 6 for
   isolated non-linear molecules, 3 for periodic cells; explicit values
   override the default).
+
+The automatic Hessian is evaluated at the current simulation structure
+(``model.xyz``, or a structure produced by an earlier ``minimize`` command)
+with the analytic NEP Hessian. It requires exactly one ordinary single-GPU NEP
+potential and does not support ``NEP_MULTIGPU``, temperature-dependent NEP,
+ILP, or the :attr:`dftd3` correction. Analytic Hessian failures are fatal;
+GPUMD never falls back to finite differences. External ``eigenvector`` and
+``modes`` inputs remain supported.
 
 Periodic Boundary Conditions
 -----------------------------

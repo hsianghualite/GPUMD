@@ -87,11 +87,7 @@ public:
 
   void initialize(double time_step, Atom& atom, Box& box, const std::vector<Group>& group);
   void initialize_before_run(
-    Atom& atom,
-    Box& box,
-    std::vector<Group>& group,
-    GPU_Vector<double>& thermo,
-    Force& force);
+    Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force);
 
   void finalize(const Atom& atom, const Box& box);
 
@@ -120,7 +116,9 @@ public:
     const Atom& atom,
     const Box& box,
     const std::vector<Group>& group,
-    Force& force);
+    Force& force,
+    const std::string& potential_filename,
+    bool dftd3_enabled);
   void parse_fix(const std::vector<std::string>& tokens, const std::vector<Group>& group);
   void parse_move(const std::vector<std::string>& tokens, const std::vector<Group>& group);
 };

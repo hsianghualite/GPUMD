@@ -25,15 +25,14 @@ struct Molecular_Hessian_Device_Data;
 class Ensemble_QCT : public Ensemble
 {
 public:
-  Ensemble_QCT(const std::vector<std::string>& tokens);
+  Ensemble_QCT(
+    const std::vector<std::string>& tokens,
+    const std::string& potential_filename,
+    bool dftd3_enabled);
   virtual ~Ensemble_QCT(void);
 
   virtual void initialize_before_run(
-    Atom& atom,
-    Box& box,
-    std::vector<Group>& group,
-    GPU_Vector<double>& thermo,
-    Force& force);
+    Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force);
 
   virtual void compute1(
     const double time_step,
@@ -121,6 +120,10 @@ private:
   int exclude_lowest_ = 6;
   bool exclude_lowest_specified_ = false;
   double min_frequency_ = 1.0e-3;
+  std::string potential_filename_;
+  bool dftd3_enabled_ = false;
+  bool hessian_displacement_specified_ = false;
+  bool hessian_progress_specified_ = false;
   double hessian_displacement_ = 1.0e-3;
   bool hessian_progress_ = true;
   int hessian_progress_interval_ = 0;
@@ -147,22 +150,17 @@ private:
   void parse_phase_point(const std::vector<std::string>& tokens);
   QCT_Modes read_qct_modes(const Atom& atom) const;
   QCT_Modes read_gpumd_modes(const Atom& atom, const Box& box) const;
-  QCT_Modes build_automatic_modes(
-    Atom& atom,
-    Box& box,
-    std::vector<Group>& group,
-    Force& force) const;
+  QCT_Modes build_automatic_modes(Atom& atom, Box& box, Force& force) const;
   void classify_stationary_point(QCT_Modes& qct_modes) const;
   void validate_qct_modes(const QCT_Modes& qct_modes, const Atom& atom) const;
-  Sampled_Point sample_harmonic_point(
-    const QCT_Modes& qct_modes, const std::uint64_t seed) const;
+  Sampled_Point sample_harmonic_point(const QCT_Modes& qct_modes, const std::uint64_t seed) const;
   bool apply_potential_correction(
     const QCT_Modes& qct_modes,
     Sampled_Point& point,
     const double reference_potential,
     const double sampled_potential) const;
-  void expand_atom_for_batch(
-    Atom& atom, std::vector<Group>& group, GPU_Vector<double>& thermo) const;
+  void
+  expand_atom_for_batch(Atom& atom, std::vector<Group>& group, GPU_Vector<double>& thermo) const;
   std::vector<double> evaluate_batch_potential_energy(
     Atom& atom, Box& box, std::vector<Group>& group, Force& force) const;
   void write_initial_outputs(const QCT_Modes& qct_modes, const Box& box) const;

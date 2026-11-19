@@ -34,21 +34,27 @@ duplication.
 #include <string>
 #include <vector>
 
-Ensemble_LSC_IVR::Ensemble_LSC_IVR(const std::vector<std::string>& tokens)
-  : Ensemble_QCT([&tokens]() {
-      // Transform: ensemble lsc_ivr T [key=value ...]
-      // Into:       ensemble qct wigner temperature T [key=value ...]
-      std::vector<std::string> transformed;
-      transformed.reserve(tokens.size() + 2);
-      transformed.push_back(tokens[0]);
-      transformed.push_back("qct");
-      transformed.push_back("wigner");
-      transformed.push_back("temperature");
-      for (size_t i = 2; i < tokens.size(); ++i) {
-        transformed.push_back(tokens[i]);
-      }
-      return transformed;
-    }())
+Ensemble_LSC_IVR::Ensemble_LSC_IVR(
+  const std::vector<std::string>& tokens,
+  const std::string& potential_filename,
+  const bool dftd3_enabled)
+  : Ensemble_QCT(
+      [&tokens]() {
+        // Transform: ensemble lsc_ivr T [key=value ...]
+        // Into:       ensemble qct wigner temperature T [key=value ...]
+        std::vector<std::string> transformed;
+        transformed.reserve(tokens.size() + 2);
+        transformed.push_back(tokens[0]);
+        transformed.push_back("qct");
+        transformed.push_back("wigner");
+        transformed.push_back("temperature");
+        for (size_t i = 2; i < tokens.size(); ++i) {
+          transformed.push_back(tokens[i]);
+        }
+        return transformed;
+      }(),
+      potential_filename,
+      dftd3_enabled)
 {
   // The base class constructor has already parsed everything as
   // "qct wigner temperature T ..." and set up Wigner sampling.
@@ -60,11 +66,7 @@ Ensemble_LSC_IVR::Ensemble_LSC_IVR(const std::vector<std::string>& tokens)
 }
 
 void Ensemble_LSC_IVR::initialize_before_run(
-  Atom& atom,
-  Box& box,
-  std::vector<Group>& group,
-  GPU_Vector<double>& thermo,
-  Force& force)
+  Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force)
 {
   // For LSC-IVR, we allow periodic boundary conditions when replicas=1.
   // The base QCT class rejects PBC only when replicas>1 (batch mode),

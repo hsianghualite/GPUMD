@@ -17,10 +17,11 @@ This is equivalent to::
 
     ensemble qct phase_point
 
-Generate a harmonic QCT initial condition from the current ``model.xyz``
-structure and then propagate it with NVE dynamics::
+Generate a harmonic QCT initial condition from the current simulation structure
+(``model.xyz``, or the structure produced by an earlier ``minimize`` command)
+and then propagate it with NVE dynamics::
 
-    ensemble qct harmonic temperature 300 hessian_displacement 0.001 min_frequency 0.001 seed 12345 zpe yes phase random replicas 1
+    ensemble qct harmonic temperature 300 min_frequency 0.001 seed 12345 zpe yes phase random replicas 1
 
 The explicit sampling-mode names are also accepted::
 
@@ -31,7 +32,7 @@ The explicit sampling-mode names are also accepted::
 
 Run an LSC-IVR calculation with Wigner sampling and anharmonic reweighting::
 
-    ensemble qct wigner temperature 300 seed 12345 replicas 64 hessian_displacement 0.001 anharmonic_reweighting yes
+    ensemble qct wigner temperature 300 seed 12345 replicas 64 anharmonic_reweighting yes
 
 Ground-state Wigner (T = 0) without reweighting::
 
@@ -59,8 +60,9 @@ Parameters
 ``harmonic``
   Backward-compatible alias for ``canonical``. Generate a QCT phase point from
   harmonic normal modes. Without ``modes`` or ``eigenvector``, GPUMD calculates
-  a molecular finite-difference Hessian from the current structure in
-  ``model.xyz`` before sampling.
+  the analytic NEP Hessian at the current simulation structure before sampling.
+  Normally this is ``model.xyz``; if a :attr:`minimize` command precedes the
+  QCT initializer, the minimized structure is used.
 
 ``canonical``
   Sample each stable mode with a Boltzmann energy, optionally including its
@@ -133,20 +135,18 @@ Parameters
   the reference Cartesian positions, masses, and atom ordering.
 
 ``hessian_displacement``
-  Central finite-difference displacement in Angstrom for automatic molecular
-  Hessian calculation. The default is ``0.001``. This keyword cannot be used
-  with an external ``eigenvector`` or ``modes`` source.
+  Retained only for backward compatibility with older input files. The
+  automatic Hessian is analytic and ignores this keyword. It is still rejected
+  together with an external ``eigenvector`` or ``modes`` source.
 
 ``hessian_progress``
-  ``yes`` (default) or ``no``. Controls progress lines during automatic Hessian
-  finite differences. Periodic CUDA Hessians report the finite-difference,
-  symmetrization, mass-weighting, eigensolve, and mode-reconstruction phases.
+  Retained only for backward compatibility. The automatic Hessian is analytic;
+  no finite-difference progress reporting is performed. Accepted values are
+  ``yes`` (default) and ``no``.
 
 ``hessian_progress_interval``
-  Positive column interval for progress reporting. The default ``0`` selects
-  an adaptive interval of about 12 updates for the complete Hessian. The first
-  and last columns are always reported; use a positive value when a fixed
-  interval is needed.
+  Retained only for backward compatibility. The analytic backend ignores this
+  value. A positive integer is still required when the keyword is present.
 
 ``exclude_lowest``
   Number of modes with the smallest absolute frequencies to exclude from
@@ -230,10 +230,18 @@ QCT propagation uses the same GPU velocity-Verlet NVE integrator as the
 enabled by this keyword.
 
 The harmonic initializer runs before the first force evaluation of a run, so
-the first force is computed from the generated QCT positions. Automatic Hessian
-sampling requires the input structure to be a stationary point; it writes
-``qct_stationary.xyz``, ``qct_hessian.out``, and ``qct_eigenvector.out`` before
-generating the phase point. For a first-order saddle, the imaginary mode is
+the first force is computed from the generated QCT positions. Automatic
+Hessian sampling uses the analytic NEP Hessian and requires the input structure
+to be a stationary point; it writes ``qct_stationary.xyz``,
+``qct_hessian.out``, and ``qct_eigenvector.out`` before generating the phase
+point. The analytic backend requires exactly one ordinary single-GPU NEP
+potential and does not support ``NEP_MULTIGPU``, temperature-dependent NEP,
+ILP, or the :attr:`dftd3` correction. If the analytic Hessian is unavailable or
+fails its numerical checks, GPUMD stops with an input error; there is no
+finite-difference fallback. External ``modes`` and ``eigenvector`` inputs are
+still supported and are not affected by these restrictions.
+
+For a first-order saddle, the imaginary mode is
 not sampled as a harmonic oscillator: its coordinate is zero and its momentum
 is launched through the dividing surface. A later crossing back through the
 dividing surface does not terminate or invalidate the trajectory.

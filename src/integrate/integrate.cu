@@ -27,10 +27,10 @@ Major contributors:
 #include "ensemble_ber.cuh"
 #include "ensemble_heat_hybrid.cuh"
 #include "ensemble_lan.cuh"
+#include "ensemble_lsc_ivr.cuh"
 #include "ensemble_mttk.cuh"
 #include "ensemble_nhc.cuh"
 #include "ensemble_npt_scr.cuh"
-#include "ensemble_lsc_ivr.cuh"
 #include "ensemble_nve.cuh"
 #include "ensemble_qct.cuh"
 #include "ensemble_ttm.cuh"
@@ -167,11 +167,7 @@ void Integrate::initialize(double time_step, Atom& atom, Box& box, const std::ve
 }
 
 void Integrate::initialize_before_run(
-  Atom& atom,
-  Box& box,
-  std::vector<Group>& group,
-  GPU_Vector<double>& thermo,
-  Force& force)
+  Atom& atom, Box& box, std::vector<Group>& group, GPU_Vector<double>& thermo, Force& force)
 {
   ensemble_->initialize_before_run(atom, box, group, thermo, force);
 }
@@ -248,7 +244,9 @@ void Integrate::parse_ensemble(
   const Atom& atom,
   const Box& box,
   const std::vector<Group>& group,
-  Force& force)
+  Force& force,
+  const std::string& potential_filename,
+  const bool dftd3_enabled)
 {
   if (tokens.size() < 2) {
     PRINT_INPUT_ERROR("Keyword 'ensemble' requires an ensemble type.");
@@ -344,14 +342,15 @@ void Integrate::parse_ensemble(
     temperature2 = ensemble_npt_qtb->t_stop;
     ensemble_ = std::move(ensemble_npt_qtb);
   } else if (tokens[1] == "qct") {
-    auto ensemble_qct = std::make_unique<Ensemble_QCT>(tokens);
+    auto ensemble_qct = std::make_unique<Ensemble_QCT>(tokens, potential_filename, dftd3_enabled);
     type = EnsembleType::QCT;
     temperature1 = ensemble_qct->get_sample_temperature();
     temperature2 = ensemble_qct->get_sample_temperature();
     temperature = temperature1;
     ensemble_ = std::move(ensemble_qct);
   } else if (tokens[1] == "lsc_ivr") {
-    auto ensemble_lsc_ivr = std::make_unique<Ensemble_LSC_IVR>(tokens);
+    auto ensemble_lsc_ivr =
+      std::make_unique<Ensemble_LSC_IVR>(tokens, potential_filename, dftd3_enabled);
     type = EnsembleType::LSC_IVR;
     temperature1 = ensemble_lsc_ivr->get_sample_temperature();
     temperature2 = ensemble_lsc_ivr->get_sample_temperature();
