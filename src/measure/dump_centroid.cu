@@ -33,32 +33,32 @@ lsc_ivr.py for RPMD Kubo correlation functions.
 #include <cstring>
 #include <cstdio>
 
-Dump_Centroid::Dump_Centroid(const char** param, int num_param)
+Dump_Centroid::Dump_Centroid(const std::vector<std::string>& tokens)
 {
-  property_name = "dump_centroid";
-
+  action_name = "dump_centroid";
+  const int num_param = tokens.size();
   if (num_param != 2 && num_param != 4 && num_param != 6) {
     PRINT_INPUT_ERROR(
       "dump_centroid should have an interval and optional trajectory/thermo key-value pairs.");
   }
-  if (!is_valid_int(param[1], &dump_interval_) || dump_interval_ <= 0) {
+  if (!is_valid_int(tokens[1], &dump_interval_) || dump_interval_ <= 0) {
     PRINT_INPUT_ERROR("dump_centroid interval should be a positive integer.");
   }
 
   bool has_trajectory = false;
   bool has_thermo = false;
   for (int i = 2; i < num_param; i += 2) {
-    if (strcmp(param[i], "trajectory") == 0) {
+    if (tokens[i] == "trajectory") {
       if (has_trajectory) {
         PRINT_INPUT_ERROR("dump_centroid trajectory may only be specified once.");
       }
-      trajectory_filename_ = param[i + 1];
+      trajectory_filename_ = tokens[i + 1];
       has_trajectory = true;
-    } else if (strcmp(param[i], "thermo") == 0) {
+    } else if (tokens[i] == "thermo") {
       if (has_thermo) {
         PRINT_INPUT_ERROR("dump_centroid thermo may only be specified once.");
       }
-      thermo_filename_ = param[i + 1];
+      thermo_filename_ = tokens[i + 1];
       has_thermo = true;
     } else {
       PRINT_INPUT_ERROR("Unknown key for dump_centroid.");
@@ -67,7 +67,7 @@ Dump_Centroid::Dump_Centroid(const char** param, int num_param)
   printf("Dump centroid trajectory every %d steps.\n", dump_interval_);
 }
 
-void Dump_Centroid::preprocess(
+void Dump_Centroid::pre_run(
   const int number_of_steps,
   const double time_step,
   Integrate& integrate,
@@ -121,7 +121,7 @@ static void average_beads_to_host(
     cpu_out[i] *= inv_P;
 }
 
-void Dump_Centroid::process(
+void Dump_Centroid::end_of_step(
   const int number_of_steps,
   int step,
   const int fixed_group,
@@ -227,7 +227,7 @@ void Dump_Centroid::process(
   fflush(thermo_);
 }
 
-void Dump_Centroid::postprocess(
+void Dump_Centroid::post_run(
   Atom& atom,
   Box& box,
   Integrate& integrate,

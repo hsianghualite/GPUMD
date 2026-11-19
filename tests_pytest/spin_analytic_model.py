@@ -1,0 +1,33 @@
+"""Analytic zero or E_i = tanh(0.1 |S_i|^2) potential in the current Spin format."""
+from spin_fixtures import FIXTURE
+
+REFERENCE_MODEL = next(path for path in sorted(FIXTURE.glob("*.nep"))
+                       if path.read_text().splitlines()[0].split()[2:] == ["Fe", "Ge"])
+
+def analytic_model(onsite):
+    lines = REFERENCE_MODEL.read_text().splitlines()
+    parameter = next(i for i, line in enumerate(lines) if line.startswith("@ parameters "))
+    scaler = next(i for i, line in enumerate(lines) if line.startswith("@ q_scaler "))
+    count = int(lines[parameter].split()[2])
+    dim = int(lines[scaler].split()[2])
+    neurons = int(next(line.split()[1] for line in lines if line.startswith("ann ")))
+    values = [0.0] * count
+    if onsite:
+        for element in range(2):
+            offset = element * neurons * (dim + 2)
+            values[offset + 30] = 0.1
+            values[offset + neurons * dim + neurons] = 1.0
+    header = ["energy_reference 0 0" if line.startswith("energy_reference ")
+              else "spin_type Fe Ge" if line.startswith("spin_type ") else line
+              for line in lines[:parameter]]
+    return "\n".join(header + [f"@ parameters {count}"] + list(map(str, values))
+                     + [f"@ q_scaler {dim}"] + ["1.0"] * dim) + "\n"
+
+def structure(spins=None):
+    lines = (FIXTURE / 'model_large_box.xyz').read_text().splitlines()
+    lines[1] = lines[1].replace(':spin:R:3', ':vel:R:3:spin:R:3:spin_vel:R:3')
+    for i in range(4):
+        f = lines[i+2].split()
+        spin = spins[i] if spins is not None else f[4:7]
+        lines[i+2] = ' '.join(f[:4] + ['0.001', '-0.002', '0.003'] + list(map(str, spin)) + ['0.02','-0.03','0.04'])
+    return '\n'.join(lines)+'\n'

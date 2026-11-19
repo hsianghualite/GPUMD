@@ -2,20 +2,23 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
-Use finite difference to calculate the seconod order force constants：
+Use finite difference to calculate the second order force constants：
     Phi_ij^ab = [F_i^a(-) - F_i^a(+)] / [u_j^b(+) - u_j^b(-)]
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
 ------------------------------------------------------------------------------*/
 
 #include "force/force.cuh"
@@ -24,8 +27,8 @@ Use finite difference to calculate the seconod order force constants：
 #include "model/group.cuh"
 #include "utilities/error.cuh"
 #include "utilities/gpu_macro.cuh"
-#include <vector>
 #include <cstring>
+#include <vector>
 
 static __global__ void gpu_shift_atom(const double dx, double* x) { x[0] += dx; }
 

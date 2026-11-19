@@ -16,37 +16,38 @@
 static const double THZ_TO_NATURAL_ANGULAR_FREQUENCY =
   2.0 * PI * 1.0e-3 * TIME_UNIT_CONVERSION;
 
-Dump_QCT::Dump_QCT(const char** param, int num_param)
+Dump_QCT::Dump_QCT(const std::vector<std::string>& tokens)
 {
-  property_name = "dump_qct";
+  action_name = "dump_qct";
+  const int num_param = tokens.size();
   if (num_param != 2 && num_param != 4 && num_param != 6 && num_param != 8) {
     PRINT_INPUT_ERROR(
       "dump_qct should have an interval and optional trajectory/thermo/zpe key-value pairs.");
   }
-  if (!is_valid_int(param[1], &dump_interval_) || dump_interval_ <= 0) {
+  if (!is_valid_int(tokens[1], &dump_interval_) || dump_interval_ <= 0) {
     PRINT_INPUT_ERROR("QCT dump interval should be a positive integer.");
   }
   bool has_trajectory = false;
   bool has_thermo = false;
   bool has_zpe = false;
   for (int i = 2; i < num_param; i += 2) {
-    if (strcmp(param[i], "trajectory") == 0) {
+    if (tokens[i] == "trajectory") {
       if (has_trajectory) {
         PRINT_INPUT_ERROR("dump_qct trajectory may only be specified once.");
       }
-      trajectory_filename_ = param[i + 1];
+      trajectory_filename_ = tokens[i + 1];
       has_trajectory = true;
-    } else if (strcmp(param[i], "thermo") == 0) {
+    } else if (tokens[i] == "thermo") {
       if (has_thermo) {
         PRINT_INPUT_ERROR("dump_qct thermo may only be specified once.");
       }
-      thermo_filename_ = param[i + 1];
+      thermo_filename_ = tokens[i + 1];
       has_thermo = true;
-    } else if (strcmp(param[i], "zpe") == 0) {
+    } else if (tokens[i] == "zpe") {
       if (has_zpe) {
         PRINT_INPUT_ERROR("dump_qct zpe may only be specified once.");
       }
-      zpe_filename_ = param[i + 1];
+      zpe_filename_ = tokens[i + 1];
       zpe_requested_ = true;
       has_zpe = true;
     } else {
@@ -56,7 +57,7 @@ Dump_QCT::Dump_QCT(const char** param, int num_param)
   printf("Dump QCT replicas every %d steps.\n", dump_interval_);
 }
 
-void Dump_QCT::preprocess(
+void Dump_QCT::pre_run(
   const int number_of_steps,
   const double time_step,
   Integrate& integrate,
@@ -70,7 +71,7 @@ void Dump_QCT::preprocess(
   (void)group;
   (void)box;
   (void)force;
-  auto* qct = dynamic_cast<Ensemble_QCT*>(integrate.ensemble.get());
+  auto* qct = dynamic_cast<Ensemble_QCT*>(&integrate.get_ensemble());
   if (qct == nullptr) {
     PRINT_INPUT_ERROR("dump_qct requires ensemble qct.");
   }
@@ -142,7 +143,7 @@ void Dump_QCT::preprocess(
   }
 }
 
-void Dump_QCT::process(
+void Dump_QCT::end_of_step(
   const int number_of_steps,
   int step,
   const int fixed_group,
@@ -174,7 +175,7 @@ void Dump_QCT::process(
   const double time_fs = global_time * TIME_UNIT_CONVERSION;
   const double velocity_scale = 1.0 / TIME_UNIT_CONVERSION;
 
-  const auto* qct = dynamic_cast<const Ensemble_QCT*>(integrate.ensemble.get());
+  const auto* qct = dynamic_cast<const Ensemble_QCT*>(&integrate.get_ensemble());
   const auto& seeds = qct->replica_seeds();
   for (int replica = 0; replica < replicas_; ++replica) {
     const unsigned long long seed =
@@ -295,7 +296,7 @@ void Dump_QCT::process_initial(
 {
   // Reuse the regular writer with a sentinel step so the initial sampled
   // phase point is emitted as Step=0, Time=0 regardless of dump interval.
-  process(
+  end_of_step(
     number_of_steps,
     -1,
     fixed_group,
@@ -310,7 +311,7 @@ void Dump_QCT::process_initial(
     force);
 }
 
-void Dump_QCT::postprocess(
+void Dump_QCT::post_run(
   Atom& atom,
   Box& box,
   Integrate& integrate,

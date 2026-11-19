@@ -2,19 +2,22 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
 Some wrappers for the cuSOLVER library
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
 ------------------------------------------------------------------------------*/
 
 #include "cusolver_wrapper.cuh"
@@ -22,13 +25,13 @@ Some wrappers for the cuSOLVER library
 #include "gpu_macro.cuh"
 #include "gpu_vector.cuh"
 #ifdef USE_HIP
-  #include <hipsolver/hipsolver.h>
+#include <hipsolver/hipsolver.h>
 #else
-  #include <cusolverDn.h>
+#include <cusolverDn.h>
 #endif
-#include <vector>
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 void eig_hermitian_QR(size_t N, double* AR, double* AI, double* W_cpu)
 {

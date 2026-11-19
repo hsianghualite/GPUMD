@@ -1,0 +1,53 @@
+.. _kw_spin_soc:
+.. index::
+   single: spin_soc (keyword in nep.in)
+
+:attr:`spin_soc`
+=================
+
+This keyword controls whether the descriptor can couple spin direction
+to the local spatial environment.
+
+Syntax
+------
+
+::
+
+  spin_soc <flag>
+
+Parameters
+----------
+
+The flag can be 0 or 1 and defaults to 1. It is used only with
+``spin_version 1``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 85
+
+   * - Value
+     - Rotational symmetry represented by the descriptor
+   * - 0
+     - independent rotations of positions and spins
+   * - 1
+     - joint rotations of positions and axial spin vectors (default)
+
+The flag changes the descriptor's allowed information flow; it does not impose
+a particular analytic SOC Hamiltonian.
+
+Output
+------
+
+None.
+
+Examples
+--------
+
+::
+
+  spin_soc 1
+
+Notes
+-----
+
+None.

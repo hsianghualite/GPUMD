@@ -39,7 +39,7 @@ class Ensemble_LSC_IVR : public Ensemble_QCT
 public:
   // Transforms "ensemble lsc_ivr T ..." into "ensemble qct wigner temperature T ..."
   // and delegates to the Ensemble_QCT constructor.
-  Ensemble_LSC_IVR(const char** param, int num_param);
+  Ensemble_LSC_IVR(const std::vector<std::string>& tokens);
   virtual ~Ensemble_LSC_IVR(void) = default;
 
   // Override to allow periodic boundary conditions and print LSC-IVR info.

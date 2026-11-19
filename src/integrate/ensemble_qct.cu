@@ -173,30 +173,33 @@ double evaluate_potential_energy(
 }
 } // namespace
 
-Ensemble_QCT::Ensemble_QCT(const char** param, int num_param)
+Ensemble_QCT::Ensemble_QCT(const std::vector<std::string>& tokens)
 {
-  type = -13;
+  type = EnsembleType::QCT;
 
-  if (num_param == 2) {
+  if (tokens.size() == 2) {
     init_mode_ = Init_Mode::phase_point;
-  } else if (strcmp(param[2], "phase_point") == 0) {
-    parse_phase_point(param, num_param);
+  } else if (tokens.size() < 3) {
+    PRINT_INPUT_ERROR(
+      "ensemble qct mode should be phase_point, harmonic, canonical, microcanonical, mode_energy, semiclassical, or wigner.");
+  } else if (tokens[2] == "phase_point") {
+    parse_phase_point(tokens);
   } else if (
-    strcmp(param[2], "harmonic") == 0 || strcmp(param[2], "canonical") == 0 ||
-    strcmp(param[2], "microcanonical") == 0 || strcmp(param[2], "mode_energy") == 0 ||
-    strcmp(param[2], "semiclassical") == 0 || strcmp(param[2], "wigner") == 0) {
-    if (strcmp(param[2], "microcanonical") == 0) {
+    tokens[2] == "harmonic" || tokens[2] == "canonical" ||
+    tokens[2] == "microcanonical" || tokens[2] == "mode_energy" ||
+    tokens[2] == "semiclassical" || tokens[2] == "wigner") {
+    if (tokens[2] == "microcanonical") {
       sampling_mode_ = Sampling_Mode::microcanonical;
-    } else if (strcmp(param[2], "mode_energy") == 0) {
+    } else if (tokens[2] == "mode_energy") {
       sampling_mode_ = Sampling_Mode::mode_energy;
-    } else if (strcmp(param[2], "semiclassical") == 0) {
+    } else if (tokens[2] == "semiclassical") {
       sampling_mode_ = Sampling_Mode::semiclassical;
-    } else if (strcmp(param[2], "wigner") == 0) {
+    } else if (tokens[2] == "wigner") {
       sampling_mode_ = Sampling_Mode::wigner;
     } else {
       sampling_mode_ = Sampling_Mode::canonical;
     }
-    parse_harmonic(param, num_param);
+    parse_harmonic(tokens);
   } else {
     PRINT_INPUT_ERROR(
       "ensemble qct mode should be phase_point, harmonic, canonical, microcanonical, mode_energy, semiclassical, or wigner.");
@@ -274,16 +277,17 @@ std::vector<double> Ensemble_QCT::replica_log_wigner_weights() const
   return weights;
 }
 
-void Ensemble_QCT::parse_phase_point(const char** param, int num_param)
+void Ensemble_QCT::parse_phase_point(const std::vector<std::string>& tokens)
 {
   init_mode_ = Init_Mode::phase_point;
+  const int num_param = tokens.size();
   if ((num_param - 3) % 2 != 0) {
     PRINT_INPUT_ERROR("ensemble qct phase_point should use optional key-value pairs.");
   }
 
   for (int i = 3; i < num_param; i += 2) {
-    if (strcmp(param[i], "replicas") == 0) {
-      replicas_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    if (tokens[i] == "replicas") {
+      replicas_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (replicas_ != 1) {
         PRINT_INPUT_ERROR("ensemble qct phase_point currently supports replicas 1 only.");
       }
@@ -293,9 +297,10 @@ void Ensemble_QCT::parse_phase_point(const char** param, int num_param)
   }
 }
 
-void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
+void Ensemble_QCT::parse_harmonic(const std::vector<std::string>& tokens)
 {
   init_mode_ = Init_Mode::harmonic;
+  const int num_param = tokens.size();
   if (num_param <= 3 || (num_param - 3) % 2 != 0) {
     PRINT_INPUT_ERROR("ensemble qct harmonic should use key-value pairs.");
   }
@@ -312,123 +317,123 @@ void Ensemble_QCT::parse_harmonic(const char** param, int num_param)
   bool has_vibrational_quantum = false;
   bool has_rotational_quantum = false;
   for (int i = 3; i < num_param; i += 2) {
-    if (strcmp(param[i], "modes") == 0) {
-      modes_file_ = param[i + 1];
+    if (tokens[i] == "modes") {
+      modes_file_ = tokens[i + 1];
       has_modes = true;
-    } else if (strcmp(param[i], "eigenvector") == 0) {
-      eigenvector_file_ = param[i + 1];
+    } else if (tokens[i] == "eigenvector") {
+      eigenvector_file_ = tokens[i + 1];
       has_eigenvector = true;
-    } else if (strcmp(param[i], "exclude_lowest") == 0) {
-      exclude_lowest_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "exclude_lowest") {
+      exclude_lowest_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (exclude_lowest_ < 0) {
         PRINT_INPUT_ERROR("exclude_lowest for ensemble qct harmonic should be non-negative.");
       }
       exclude_lowest_specified_ = true;
       has_exclude_lowest = true;
-    } else if (strcmp(param[i], "min_frequency") == 0) {
-      min_frequency_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "min_frequency") {
+      min_frequency_ = get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (min_frequency_ < 0.0) {
         PRINT_INPUT_ERROR("min_frequency for ensemble qct harmonic should be non-negative.");
       }
       has_min_frequency = true;
-    } else if (strcmp(param[i], "hessian_displacement") == 0) {
-      hessian_displacement_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "hessian_displacement") {
+      hessian_displacement_ = get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (hessian_displacement_ <= 0.0) {
         PRINT_INPUT_ERROR("hessian_displacement for ensemble qct harmonic should be positive.");
       }
       has_hessian_displacement = true;
-    } else if (strcmp(param[i], "hessian_progress") == 0) {
-      hessian_progress_ = parse_yes_no(param[i + 1], "hessian_progress");
-    } else if (strcmp(param[i], "hessian_progress_interval") == 0) {
-      hessian_progress_interval_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "hessian_progress") {
+      hessian_progress_ = parse_yes_no(tokens[i + 1], "hessian_progress");
+    } else if (tokens[i] == "hessian_progress_interval") {
+      hessian_progress_interval_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (hessian_progress_interval_ <= 0) {
         PRINT_INPUT_ERROR(
           "hessian_progress_interval for ensemble qct harmonic should be positive.");
       }
-    } else if (strcmp(param[i], "temperature") == 0) {
-      sample_temperature_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "temperature") {
+      sample_temperature_ = get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (sample_temperature_ < 0.0) {
         PRINT_INPUT_ERROR("temperature for ensemble qct harmonic should be non-negative.");
       }
       has_temperature = true;
-    } else if (strcmp(param[i], "energy") == 0) {
-      total_energy_eV_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "energy") {
+      total_energy_eV_ = get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (total_energy_eV_ < 0.0) {
         PRINT_INPUT_ERROR("energy for ensemble qct should be non-negative.");
       }
       selected_mode_energy_eV_ = total_energy_eV_;
       has_energy = true;
-    } else if (strcmp(param[i], "mode") == 0) {
-      selected_mode_index_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "mode") {
+      selected_mode_index_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (selected_mode_index_ < 0) {
         PRINT_INPUT_ERROR("mode for ensemble qct should be non-negative.");
       }
       has_mode = true;
-    } else if (strcmp(param[i], "v") == 0) {
-      vibrational_quantum_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "v") {
+      vibrational_quantum_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (vibrational_quantum_ < 0) {
         PRINT_INPUT_ERROR("v for ensemble qct semiclassical should be non-negative.");
       }
       has_vibrational_quantum = true;
-    } else if (strcmp(param[i], "J") == 0) {
-      rotational_quantum_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "J") {
+      rotational_quantum_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (rotational_quantum_ < 0) {
         PRINT_INPUT_ERROR("J for ensemble qct semiclassical should be non-negative.");
       }
       has_rotational_quantum = true;
-    } else if (strcmp(param[i], "stationary_point") == 0) {
-      if (strcmp(param[i + 1], "auto") == 0) {
+    } else if (tokens[i] == "stationary_point") {
+      if (tokens[i + 1] == "auto") {
         stationary_point_ = Stationary_Point::automatic;
-      } else if (strcmp(param[i + 1], "minimum") == 0) {
+      } else if (tokens[i + 1] == "minimum") {
         stationary_point_ = Stationary_Point::minimum;
-      } else if (strcmp(param[i + 1], "saddle") == 0) {
+      } else if (tokens[i + 1] == "saddle") {
         stationary_point_ = Stationary_Point::saddle;
       } else {
         PRINT_INPUT_ERROR(
           "stationary_point for ensemble qct harmonic should be auto, minimum, or saddle.");
       }
-    } else if (strcmp(param[i], "reaction_direction") == 0) {
-      if (strcmp(param[i + 1], "positive") == 0) {
+    } else if (tokens[i] == "reaction_direction") {
+      if (tokens[i + 1] == "positive") {
         reaction_direction_ = Reaction_Direction::positive;
-      } else if (strcmp(param[i + 1], "negative") == 0) {
+      } else if (tokens[i + 1] == "negative") {
         reaction_direction_ = Reaction_Direction::negative;
-      } else if (strcmp(param[i + 1], "random") == 0) {
+      } else if (tokens[i + 1] == "random") {
         reaction_direction_ = Reaction_Direction::random;
       } else {
         PRINT_INPUT_ERROR(
           "reaction_direction for ensemble qct harmonic should be positive, negative, or random.");
       }
-    } else if (strcmp(param[i], "reaction_energy") == 0) {
-      reaction_energy_eV_ = get_double_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "reaction_energy") {
+      reaction_energy_eV_ = get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (reaction_energy_eV_ < 0.0) {
         PRINT_INPUT_ERROR("reaction_energy for ensemble qct harmonic should be non-negative.");
       }
-    } else if (strcmp(param[i], "stationary_force_tolerance") == 0) {
+    } else if (tokens[i] == "stationary_force_tolerance") {
       stationary_force_tolerance_ =
-        get_double_from_token(param[i + 1], __FILE__, __LINE__);
+        get_double_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (stationary_force_tolerance_ <= 0.0) {
         PRINT_INPUT_ERROR(
           "stationary_force_tolerance for ensemble qct harmonic should be positive.");
       }
-    } else if (strcmp(param[i], "seed") == 0) {
-      seed_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "seed") {
+      seed_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (seed_ < 0) {
         PRINT_INPUT_ERROR("seed for ensemble qct harmonic should be non-negative.");
       }
-    } else if (strcmp(param[i], "replicas") == 0) {
-      replicas_ = get_int_from_token(param[i + 1], __FILE__, __LINE__);
+    } else if (tokens[i] == "replicas") {
+      replicas_ = get_int_from_token(tokens[i + 1], __FILE__, __LINE__);
       if (replicas_ <= 0) {
         PRINT_INPUT_ERROR("replicas for ensemble qct harmonic should be positive.");
       }
-    } else if (strcmp(param[i], "zpe") == 0) {
-      zpe_ = parse_yes_no(param[i + 1], "zpe");
+    } else if (tokens[i] == "zpe") {
+      zpe_ = parse_yes_no(tokens[i + 1], "zpe");
       has_zpe = true;
-    } else if (strcmp(param[i], "anharmonic_reweighting") == 0) {
-      anharmonic_reweight_ = parse_yes_no(param[i + 1], "anharmonic_reweighting");
-    } else if (strcmp(param[i], "phase") == 0) {
-      if (strcmp(param[i + 1], "random") == 0) {
+    } else if (tokens[i] == "anharmonic_reweighting") {
+      anharmonic_reweight_ = parse_yes_no(tokens[i + 1], "anharmonic_reweighting");
+    } else if (tokens[i] == "phase") {
+      if (tokens[i + 1] == "random") {
         phase_mode_ = Phase_Mode::random;
-      } else if (strcmp(param[i + 1], "zero") == 0) {
+      } else if (tokens[i + 1] == "zero") {
         phase_mode_ = Phase_Mode::zero;
       } else {
         PRINT_INPUT_ERROR("phase for ensemble qct harmonic should be random or zero.");
@@ -1340,7 +1345,6 @@ void Ensemble_QCT::expand_atom_for_batch(
   const auto old_position = atom.cpu_position_per_atom;
   const auto old_velocity = atom.cpu_velocity_per_atom;
   const auto old_type_size = atom.cpu_type_size;
-  const bool had_position_temp = atom.position_temp.size() > 0;
   const bool had_unwrapped_position = atom.unwrapped_position.size() > 0;
   std::vector<std::vector<int>> old_labels(group.size());
   for (size_t m = 0; m < group.size(); ++m) {
@@ -1385,10 +1389,6 @@ void Ensemble_QCT::expand_atom_for_batch(
     group[m].find_contents(total_atoms);
   }
   allocate_memory_gpu(group, atom, thermo);
-  if (had_position_temp) {
-    atom.position_temp.resize(static_cast<size_t>(total_atoms) * 3);
-    atom.position_temp.copy_from_device(atom.position_per_atom.data());
-  }
   if (had_unwrapped_position) {
     atom.unwrapped_position.resize(static_cast<size_t>(total_atoms) * 3);
     atom.unwrapped_position.copy_from_device(atom.position_per_atom.data());
@@ -1771,6 +1771,8 @@ void Ensemble_QCT::initialize_harmonic_replicas(
 
 void Ensemble_QCT::compute1(
   const double time_step,
+  const int step,
+  const int number_of_steps,
   const std::vector<Group>& group,
   Box& box,
   Atom& atom,
@@ -1799,10 +1801,13 @@ void Ensemble_QCT::compute1(
 
 void Ensemble_QCT::compute2(
   const double time_step,
+  const int step,
+  const int number_of_steps,
   const std::vector<Group>& group,
   Box& box,
   Atom& atom,
-  GPU_Vector<double>& thermo)
+  GPU_Vector<double>& thermo,
+  Force& force)
 {
 #ifdef USE_NEPCG
   velocity_verlet_cg(
@@ -1826,7 +1831,6 @@ void Ensemble_QCT::compute2(
 
   if (!is_batch()) {
     find_thermo(
-      false,
       box.get_volume(),
       group,
       atom.mass,

@@ -2,19 +2,22 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*-----------------------------------------------------------------------------------------------100
 Calculate the electrostatic energy and forces
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
 --------------------------------------------------------------------------------------------------*/
 
 #include "compute_es.cuh"
@@ -22,16 +25,17 @@ Calculate the electrostatic energy and forces
 #include "utilities/common.cuh"
 #include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
-#include <cstring>
+#include <cmath>
 #include <iostream>
 #include <vector>
 
-namespace {
+namespace
+{
 void cross_product(const float a[3], const float b[3], float c[3])
 {
-  c[0] =  a[1] * b [2] - a[2] * b [1];
-  c[1] =  a[2] * b [0] - a[0] * b [2];
-  c[2] =  a[0] * b [1] - a[1] * b [0];
+  c[0] = a[1] * b[2] - a[2] * b[1];
+  c[1] = a[2] * b[0] - a[0] * b[2];
+  c[2] = a[0] * b[1] - a[1] * b[0];
 }
 
 float get_area(const float* a, const float* b)
@@ -119,9 +123,9 @@ __global__ void find_force_charge_reciprocal_space(
       temp_virial_sum[0] += qGSE * (1.0f - alpha_k_factor * kx * kx); // xx
       temp_virial_sum[1] += qGSE * (1.0f - alpha_k_factor * ky * ky); // yy
       temp_virial_sum[2] += qGSE * (1.0f - alpha_k_factor * kz * kz); // zz
-      temp_virial_sum[3] -= qGSE * (alpha_k_factor * kx * ky); // xy
-      temp_virial_sum[4] -= qGSE * (alpha_k_factor * ky * kz); // yz
-      temp_virial_sum[5] -= qGSE * (alpha_k_factor * kz * kx); // zx
+      temp_virial_sum[3] -= qGSE * (alpha_k_factor * kx * ky);        // xy
+      temp_virial_sum[4] -= qGSE * (alpha_k_factor * ky * kz);        // yz
+      temp_virial_sum[5] -= qGSE * (alpha_k_factor * kz * kx);        // zx
       temp_force_sum[0] += kx * imag_term;
       temp_force_sum[1] += ky * imag_term;
       temp_force_sum[2] += kz * imag_term;
@@ -235,7 +239,7 @@ __global__ void find_force_charge_real_space(
   }
 }
 
-}
+} // namespace
 
 void Compute_es::initialize()
 {
@@ -256,8 +260,8 @@ void Compute_es::find_k_and_G(const double* box)
   float a2[3] = {0.0f};
   float a3[3] = {0.0f};
   float det = box[0] * (box[4] * box[8] - box[5] * box[7]) +
-    box[1] * (box[5] * box[6] - box[3] * box[8]) +
-    box[2] * (box[3] * box[7] - box[4] * box[6]);
+              box[1] * (box[5] * box[6] - box[3] * box[8]) +
+              box[2] * (box[3] * box[7] - box[4] * box[6]);
   a1[0] = box[0];
   a1[1] = box[3];
   a1[2] = box[6];
@@ -282,7 +286,7 @@ void Compute_es::find_k_and_G(const double* box)
     b3[d] *= two_pi_over_det;
   }
 
-  const float volume_k = two_pi * two_pi * two_pi / abs(det);
+  const float volume_k = two_pi * two_pi * two_pi / std::abs(det);
   int n1_max = alpha * two_pi * get_area(b2, b3) / volume_k;
   int n2_max = alpha * two_pi * get_area(b3, b1) / volume_k;
   int n3_max = alpha * two_pi * get_area(b1, b2) / volume_k;
@@ -294,10 +298,11 @@ void Compute_es::find_k_and_G(const double* box)
   std::vector<float> cpu_G;
 
   for (int n1 = 0; n1 <= n1_max; ++n1) {
-    for (int n2 = - n2_max; n2 <= n2_max; ++n2) {
-      for (int n3 = - n3_max; n3 <= n3_max; ++n3) {
+    for (int n2 = -n2_max; n2 <= n2_max; ++n2) {
+      for (int n3 = -n3_max; n3 <= n3_max; ++n3) {
         const int nsq = n1 * n1 + n2 * n2 + n3 * n3;
-        if (nsq == 0 || (n1 == 0 && n2 < 0) || (n1 == 0 && n2 == 0 && n3 < 0)) continue;
+        if (nsq == 0 || (n1 == 0 && n2 < 0) || (n1 == 0 && n2 == 0 && n3 < 0))
+          continue;
         const float kx = n1 * b1[0] + n2 * b2[0] + n3 * b3[0];
         const float ky = n1 * b1[1] + n2 * b2[1] + n3 * b3[1];
         const float kz = n1 * b1[2] + n2 * b2[2] + n3 * b3[2];
@@ -306,7 +311,7 @@ void Compute_es::find_k_and_G(const double* box)
           cpu_kx.emplace_back(kx);
           cpu_ky.emplace_back(ky);
           cpu_kz.emplace_back(kz);
-          const float G = abs(two_pi_over_det) / ksq * exp(-ksq * alpha_factor);
+          const float G = std::abs(two_pi_over_det) / ksq * exp(-ksq * alpha_factor);
           cpu_G.emplace_back(2.0f * G);
         }
       }
@@ -402,7 +407,7 @@ void Compute_es::find_force(
   GPU_CHECK_KERNEL
 }
 
-void Compute_es::preprocess(
+void Compute_es::pre_run(
   const int number_of_steps,
   const double time_step,
   Integrate& integrate,
@@ -414,7 +419,7 @@ void Compute_es::preprocess(
   // nothing
 }
 
-void Compute_es::process(
+void Compute_es::end_of_step(
   const int number_of_steps,
   int step,
   const int fixed_group,
@@ -453,14 +458,19 @@ void Compute_es::process(
   double potential_total = 0.0;
   for (int n = 0; n < N; ++n) {
     potential_total += potential_cpu[n];
-    fprintf(fid_force, "%16.8e%16.8e%16.8e\n", force_cpu[0 * N + n], force_cpu[1 * N + n], force_cpu[2 * N + n]);
+    fprintf(
+      fid_force,
+      "%16.8e%16.8e%16.8e\n",
+      force_cpu[0 * N + n],
+      force_cpu[1 * N + n],
+      force_cpu[2 * N + n]);
   }
   fprintf(fid_energy, "%16.8e\n", potential_total);
   fclose(fid_force);
   fclose(fid_energy);
 }
 
-void Compute_es::postprocess(
+void Compute_es::post_run(
   Atom& atom,
   Box& box,
   Integrate& integrate,
@@ -471,15 +481,16 @@ void Compute_es::postprocess(
   // nothing
 }
 
-void Compute_es::parse(const char** param, int num_param)
+void Compute_es::parse(const std::vector<std::string>& tokens)
 {
+  const int num_param = tokens.size();
   printf("Compute electrostatic energy and force.\n");
 
   if (num_param != 2) {
     PRINT_INPUT_ERROR("compute_dpdt should have 1 parameter.\n");
   }
 
-  if (!is_valid_int(param[1], &sample_interval)) {
+  if (!is_valid_int(tokens[1], &sample_interval)) {
     PRINT_INPUT_ERROR("sample interval for compute_es should be an integer number.\n");
   }
   if (sample_interval != 1) {
@@ -488,8 +499,8 @@ void Compute_es::parse(const char** param, int num_param)
   printf("    sample interval is %d.\n", sample_interval);
 }
 
-Compute_es::Compute_es(const char** param, int num_param)
+Compute_es::Compute_es(const std::vector<std::string>& tokens)
 {
-  parse(param, num_param);
-  property_name = "compute_es";
+  parse(tokens);
+  action_name = "compute_es";
 }

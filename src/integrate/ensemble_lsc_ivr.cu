@@ -31,56 +31,28 @@ duplication.
 
 #include "ensemble_lsc_ivr.cuh"
 #include "utilities/error.cuh"
-#include <cstring>
 #include <string>
 #include <vector>
 
-// File-scope static storage for the transformed parameter strings.
-// Safe because GPUMD is single-threaded during setup, and Ensemble_QCT
-// copies any string values into its own members during construction.
-namespace
-{
-std::vector<std::string> g_param_strings;
-std::vector<std::vector<char>> g_param_buffers;
-std::vector<const char*> g_param_argv;
-} // namespace
-
-Ensemble_LSC_IVR::Ensemble_LSC_IVR(const char** param, int num_param)
-  : Ensemble_QCT([](const char** p, int n) -> const char** {
-      // Transform:  ensemble lsc_ivr T [key=value ...]
-      // Into:        ensemble qct wigner temperature T [key=value ...]
-      //
-      // We replace param[1]="lsc_ivr" with "qct", insert "wigner" at
-      // position 2, insert "temperature" at position 3, then copy T and
-      // all remaining key-value pairs from the original positions 2..n-1.
-      g_param_strings.clear();
-      g_param_buffers.clear();
-      g_param_argv.clear();
-
-      g_param_strings.reserve(n + 2); // +2 for "wigner" and "temperature"
-      g_param_strings.push_back(std::string(p[0])); // "ensemble"
-      g_param_strings.push_back("qct");              // replaces "lsc_ivr"
-      g_param_strings.push_back("wigner");           // sampling mode
-      g_param_strings.push_back("temperature");      // keyword before T
-      for (int i = 2; i < n; ++i) {
-        g_param_strings.push_back(std::string(p[i])); // T and key-value pairs
+Ensemble_LSC_IVR::Ensemble_LSC_IVR(const std::vector<std::string>& tokens)
+  : Ensemble_QCT([&tokens]() {
+      // Transform: ensemble lsc_ivr T [key=value ...]
+      // Into:       ensemble qct wigner temperature T [key=value ...]
+      std::vector<std::string> transformed;
+      transformed.reserve(tokens.size() + 2);
+      transformed.push_back(tokens[0]);
+      transformed.push_back("qct");
+      transformed.push_back("wigner");
+      transformed.push_back("temperature");
+      for (size_t i = 2; i < tokens.size(); ++i) {
+        transformed.push_back(tokens[i]);
       }
-
-      g_param_buffers.reserve(g_param_strings.size());
-      g_param_argv.reserve(g_param_strings.size());
-      for (auto& s : g_param_strings) {
-        g_param_buffers.emplace_back(s.begin(), s.end());
-        g_param_buffers.back().push_back('\0');
-        g_param_argv.push_back(g_param_buffers.back().data());
-      }
-      return g_param_argv.data();
-    }(param, num_param),
-    num_param + 2) // +2 for "wigner" and "temperature"
+      return transformed;
+    }())
 {
   // The base class constructor has already parsed everything as
   // "qct wigner temperature T ..." and set up Wigner sampling.
-  // Override the ensemble type to distinguish LSC-IVR from QCT.
-  type = -14;
+  type = EnsembleType::LSC_IVR;
 
   printf("Use LSC-IVR ensemble for this run.\n");
   printf("    LSC-IVR uses Wigner quantum-corrected initial conditions.\n");

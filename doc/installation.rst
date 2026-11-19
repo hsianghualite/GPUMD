@@ -1,3 +1,4 @@
+.. _installation:
 .. index:: Installation
 
 Installation
@@ -6,105 +7,238 @@ Installation
 Download
 ========
 
-The source code is hosted on `github <https://github.com/brucefan1983/GPUMD>`_.
+Download the source from the `GPUMD repository <https://github.com/brucefan1983/GPUMD>`_, or clone it with Git::
 
+  git clone https://github.com/brucefan1983/GPUMD.git
+  cd GPUMD
+
+The commands below refer to this repository directory.
 
 Prerequisites
 =============
 
-To compile (and run) :program:`GPUMD` one requires an Nvidia GPU card with compute capability no less than 3.5 and CUDA toolkit 9.0 or newer.
-On Linux systems, one also needs a C++ compiler supporting at least the C++11 standard.
-On Windows systems, one also needs the ``cl.exe`` compiler from Microsoft Visual Studio and a `64-bit version of make.exe <http://www.equation.com/servlet/equation.cmd?fa=make>`_.
+For NVIDIA GPUs, use a CUDA toolkit and driver that support the target GPU, with a compatible host compiler.
 
+* **Make:** the Linux makefile uses C++14. On Windows, use ``cl.exe`` from Microsoft Visual Studio and a `64-bit make.exe <http://www.equation.com/servlet/equation.cmd?fa=make>`_.
+* **CMake (pre-release):** use CMake 3.24 or newer and a host compiler with C++17 support. On Windows, use ``cl.exe`` from Microsoft Visual Studio.
+
+For AMD GPUs, use ROCm/HIP and follow :ref:`Building for AMD GPUs <build_amd_hip>`.
+
+.. _compilation:
 
 Compilation
 ===========
 
-In the ``src`` directory run ``make``, which generates two executables, ``nep`` and ``gpumd``.
-Please check the comments in the beginning of the makefile for some compiling options.
+Choose one build method.
+Both produce ``gpumd``, ``nep``, and ``tb`` by default.
 
+.. tabs::
 
-Examples
-========
+   .. tab:: Make
 
-You can find several examples for how to use both the ``gpumd`` and ``nep`` executables in `the examples directory <https://github.com/brucefan1983/GPUMD/tree/master/examples>`_ of the :program:`GPUMD` repository.
+      Run ``make`` in ``src``. Set ``CUDA_ARCH`` for your GPU and CUDA toolkit, for example::
 
+        cd src
+        make CUDA_ARCH=-arch=sm_89
+
+      This example targets an RTX 4090. The executables are written to ``src``.
+      To build only one executable, add its target name, for example ``make gpumd CUDA_ARCH=-arch=sm_89``.
+
+      The makefile defaults to ``sm_60``. CUDA 13.0 removed offline compilation support for Pascal GPUs, including ``sm_60``; see the `CUDA release notes <https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/index.html>`_.
+      Check the comments at the beginning of ``src/makefile`` for other options.
+      After changing compiler flags, GPU architecture, or optional libraries, run ``make clean`` before rebuilding.
+
+   .. tab:: CMake (pre-release)
+
+      Configure and build from the repository root::
+
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release --parallel
+
+      The executables are placed in ``build`` with a single-configuration generator, or normally in ``build/Release`` with Visual Studio.
+      ``CMAKE_BUILD_TYPE`` selects the configuration for generators such as Unix Makefiles and Ninja; ``--config`` selects it for generators such as Visual Studio.
+      Omit ``--parallel`` for serial compilation.
+
+      The GPU architecture defaults to ``native``.
+      To choose it explicitly, add ``-DCMAKE_CUDA_ARCHITECTURES`` to the configure command, for example for an RTX 4090::
+
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89
+
+      To build only one executable, add its target name::
+
+        cmake --build build --config Release --target gpumd --parallel
+
+.. _build_amd_hip:
+
+Building for AMD GPUs (ROCm/HIP)
+================================
+
+Use ``src/makefile.hip`` with a ROCm installation that provides ``hipcc``, rocThrust/rocPRIM, hipBLAS, hipSOLVER, and hipFFT::
+
+  cd src
+  make -f makefile.hip
+
+The default target architecture is ``gfx1100``. To build for a different architecture, set ``HIP_ARCH``, for example::
+
+  make -f makefile.hip HIP_ARCH=gfx90a
+
+The executables are written to ``src``.
+After changing build options, clean with ``make -f makefile.hip clean`` before rebuilding.
+CMake builds for AMD GPUs are not yet supported.
+
+Running a program
+=================
+
+Run the executable from the directory containing the input files, using its full path or adding its directory to ``PATH``.
+For example, in a Linux shell after a Make build::
+
+  export PATH="/path/to/GPUMD/src:$PATH"
+
+Replace ``/path/to/GPUMD/src`` with your executable directory; for a CMake build, use ``/path/to/GPUMD/build`` instead.
+Then run ``gpumd`` from the simulation directory or ``nep`` from the training directory.
+Follow the :ref:`MD workflow <gpumd_executable>` or :ref:`NEP training and prediction workflow <nep_executable>` for the required inputs and outputs.
+The repository's `examples directory <https://github.com/brucefan1983/GPUMD/tree/master/examples>`_ provides examples for both programs.
+
+GPU selection and multi-GPU execution
+=====================================
+
+The ``nep`` executable uses all GPUs visible to the process. On CUDA systems,
+use ``CUDA_VISIBLE_DEVICES`` to select a subset, for example::
+
+  CUDA_VISIBLE_DEVICES=0 nep
+  CUDA_VISIBLE_DEVICES=0,1 nep
+
+The ``gpumd`` executable also uses all visible GPUs when running standard NEP
+or temperature-dependent NEP models, and ``nep_spin`` spin models.
+For example::
+
+  CUDA_VISIBLE_DEVICES=0,1 gpumd
+
+For ordinary MD, charge NEP models currently use the single-GPU implementation in ``gpumd``.
+For replica dynamics, :ref:`multi_replica <kw_multi_replica>` assigns complete replicas of an energy NEP or charge NEP system to the visible GPUs.
+On managed clusters, request GPUs through the scheduler and use the device
+visibility configured by the scheduler.
+
+For multi-GPU runs, GPUs with similar performance are recommended because
+synchronization can cause faster devices to wait for slower ones. For NEP
+molecular dynamics, GPUMD chooses the spatial partition direction automatically.
+The optional manual ``x``, ``y``, or ``z`` partition direction is documented
+with the :ref:`potential keyword <kw_potential>`.
+
+GNEP setup
+==========
+
+GNEP trains NEP models using analytical gradients.
+See the `method paper <https://doi.org/10.1016/j.cpc.2025.109994/>`_ for details.
+
+.. tabs::
+
+   .. tab:: Make
+
+      To compile the ``gnep`` executable, run ``make gnep`` in the ``src`` directory.
+
+   .. tab:: CMake (pre-release)
+
+      To compile the ``gnep`` executable, configure with CMake as described in the :ref:`compilation` section above, then run:
+
+      .. code-block:: bash
+
+        cmake --build build --config Release --target gnep
+
+Prepare ``train.xyz`` and, optionally, ``test.xyz`` as for ``nep``.
+Write the model and training settings in ``gnep.in``.
+The following example uses default values except for ``type`` and the optional ``seed``::
+
+  type         2 Ge Se
+  prediction   0
+  cutoff       8 4
+  n_max        4 4
+  basis_size   8 8
+  l_max        4
+  neuron       30
+  lambda_e     1.0
+  lambda_f     2.0
+  lambda_v     0.1
+  start_lr     1e-3
+  stop_lr      1e-7
+  weight_decay 0.0
+  batch        2
+  epoch        50
+  seed         20260831
+
+The shared model and loss keywords have the same meanings as in ``nep.in``.
+GNEP supports three-body angular descriptors, with ``l_max 4``; four- and five-body descriptors are not supported.
+The default ``lambda_f`` is 2.0.
+
+* ``start_lr`` and ``stop_lr`` set the starting and final learning rates; both must be non-negative.
+* ``weight_decay`` is a non-negative weight-decay coefficient.
+* ``batch`` sets the global batch size and must be a positive integer; see below for multi-GPU use.
+* ``epoch`` sets the number of passes through the training set.
+* ``seed`` is an optional non-negative integer controlling parameter initialization and data shuffling.
+  Without an explicit seed, data shuffling can differ between runs.
+
+Run ``gnep`` from the directory containing the input files, using its full path or adding its directory to ``PATH``.
+GNEP uses all visible GPUs on one node. On CUDA systems, select them with ``CUDA_VISIBLE_DEVICES``, for example::
+
+  CUDA_VISIBLE_DEVICES=0 gnep
+  CUDA_VISIBLE_DEVICES=0,1 gnep
+  CUDA_VISIBLE_DEVICES=0,1,2,3 gnep
+
+Global batch size and multi-GPU efficiency
+------------------------------------------
+
+``batch`` is the total number of configurations per batch across all visible GPUs; it does not grow with the GPU count.
+For example, ``batch 4`` selects a global batch of four configurations on either one or four GPUs.
+Keep the batch size, dataset, seed, and number of epochs fixed when comparing GPU counts.
+Changing the batch size can change the training trajectory.
+
+Each participating GPU needs at least one configuration from the batch.
+``batch 1`` therefore uses only one GPU per step.
+Use a batch size of at least 2 for two GPUs or 4 for four GPUs, with enough training configurations to fill those batches.
+A batch containing fewer configurations than visible GPUs uses fewer GPUs.
+
+Small configurations or small batches may run faster on one GPU.
+Choose the batch size according to GPU memory, training convergence, and measured performance for the intended dataset.
 
 .. _netcdf_setup:
 .. index::
    single: NetCDF setup
-   
-GNEP setup
-==========
-
-GNEP stands for a method of training NEP models using analytical Gradients (G stands for Gradients).
-See the `implementation paper <https://doi.org/10.1016/j.cpc.2025.109994/>`_ for details.
-
-To compile the ``gnep`` executable, one can run ``make gnep`` in the ``src`` directory.
-
-The usage of the ``gnep`` executable is similar to that of the ``nep`` executable.
-The major difference is that training hyperparameters are written in ``gnep.in`` instead of ``nep.in``'
-Below we use an explicit example with default parameters (except for the ``type`` keyword) to illustrate the inputs in ``gnep.in``::
-
-  type         2 Ge Se      # same usage as in nep.in
-  prediction   0            # same usage as in nep.in
-  cutoff       8 4          # same usage as in nep.in
-  n_max        4 4          # same usage as in nep.in
-  basis_size   8 8          # same usage as in nep.in
-  l_max        4            # same usage as in nep.in but does not support 4-body and 5-body descriptors
-  neuron       30           # same usage as in nep.in
-  lambda_e     1.0          # same usage as in nep.in
-  lambda_f     2.0          # same usage as in nep.in but defaults to 2
-  lambda_v     0.1          # same usage as in nep.in
-  start_lr     1e-3         # new keyword to set the starting learning rate, which should be a non-negative floating-point number
-  stop_lr      1e-7         # new keyword to set the stopping learning rate, which should be a non-negative floating-point number
-  weight_decay 0.0          # new keyword to set the weight decay parameter, which should be a non-negative floating-point number
-  batch        2            # same usage as in nep.in but favors small values
-  epoch        50           # one epoch equals #structures/#batchsize training steps
 
 NetCDF setup
 ============
 
-To use `NetCDF <https://www.unidata.ucar.edu/software/netcdf/>`_ (see :ref:`dump_netcdf keyword <kw_dump_netcdf>`) with :program:`GPUMD`, a few extra steps must be taken before building :program:`GPUMD`.
-First, you must download and install the correct version of NetCDF.
-Currently, :program:`GPUMD` is coded to work with `netCDF-C 4.6.3 <https://github.com/Unidata/netcdf-c/releases/tag/v4.6.3>`_ and it is recommended that this version is used (not newer versions).
+The :ref:`dump_netcdf command <kw_dump_netcdf>` requires netCDF-C 4.6.3 or newer.
+The steps below use Make; append the flags after the existing variable definitions in ``src/makefile``.
 
-The setup instructions are below:
+Install NetCDF
+--------------
 
-* Download `netCDF-C 4.6.3 <https://github.com/Unidata/netcdf-c/releases/tag/v4.6.3>`_
-* Configure and build NetCDF.
-  It is best to follow the instructions included with the software but, for the configuration, please use the following flags seen in our example line
+Install `netCDF-C 4.6.3 <https://github.com/Unidata/netcdf-c/releases/tag/v4.6.3>`_ or a `newer release <https://github.com/Unidata/netcdf-c/releases>`_, following its build instructions.
+For uncompressed output, a minimal configuration is::
 
-  .. code:: bash
+  ./configure --prefix=<path> --disable-netcdf-4 --disable-dap
+  make -j
+  make install
 
-     ./configure --prefix=<path> --disable-netcdf-4 --disable-dap
+Here, ``<path>`` is the installation directory.
+This configuration avoids HDF5 and zlib dependencies.
+For ``compression deflate`` output, omit ``--disable-netcdf-4`` and build with NetCDF4/HDF5 and zlib support.
+If a newer release reports a missing ``xml2-config``, add ``--disable-libxml2`` to use its bundled XML parser.
 
-  Here, the :attr:`--prefix` determines the output directory of the build. Then make and install NetCDF:
+Compile GPUMD
+-------------
 
-  .. code:: bash
+Append the following to ``src/makefile``, replacing ``<path>`` with the NetCDF installation directory:
 
-     make -j && make install
+.. code:: make
 
-* Enable the NetCDF functionality.
-  To do this, one must enable the :attr:`USE_NETCDF` flag.
-  In the makefile, this will look as follows:
+  CFLAGS += -DUSE_NETCDF
+  INC += -I<path>/include
+  LDFLAGS += -L<path>/lib -Xlinker=-rpath -Xlinker=<path>/lib
+  LIBS += -lnetcdf
 
-  .. code:: make
-
-     CFLAGS = -std=c++14 -O3 $(CUDA_ARCH) -DUSE_NETCDF
-
-  In addition to that line the makefile must also be updated to the following:
-
-  .. code:: make
-
-     INC = -I<path>/include -I./
-     LDFLAGS = -L<path>/lib
-     LIBS = -lcublas -lcusolver -l:libnetcdf.a
-
-  where :attr:`<path>` should be replaced with the installation path for NetCDF (defined in :attr:`--prefix` of the ``./configure`` command).
-* Follow the remaining :program:`GPUMD` installation instructions
-
-Following these steps will enable the :ref:`dump_netcdf keyword <kw_dump_netcdf>`.
+The library path is used both when linking and when running GPUMD.
+Run ``make clean`` in ``src``, then rebuild as described under :ref:`Compilation <compilation>`.
 
 
 .. _plumed_setup:
@@ -114,53 +248,43 @@ Following these steps will enable the :ref:`dump_netcdf keyword <kw_dump_netcdf>
 PLUMED setup
 ============
 
-To use `PLUMED <https://www.plumed.org/>`_ (see :ref:`plumed keyword <kw_plumed>`) with :program:`GPUMD`, a few extra steps must be taken before building :program:`GPUMD`.
-First, you must download and install PLUMED.
+The :ref:`plumed command <kw_plumed>` requires a PLUMED installation.
+The steps below use Make; append the flags after the existing variable definitions in ``src/makefile``.
 
-The setup instructions are below:
+Install PLUMED
+--------------
 
-* Download `the latest version of PLUMED <https://github.com/plumed/plumed2/releases/>`_, e.g. the `plumed-src-2.8.2.tgz <https://github.com/plumed/plumed2/releases/download/v2.8.2/plumed-src-2.8.2.tgz>`_ tarball.
-* Configure and build PLUMED.
-  It is best to follow the `instructions <https://www.plumed.org/doc-v2.8/user-doc/html/_installation.html>`_, but for a quick installation, you may use the following setup:
+Download a `PLUMED release <https://github.com/plumed/plumed2/releases/>`_ and follow its installation instructions.
+For example, the following configuration can be used with `PLUMED 2.8.2 <https://www.plumed.org/doc-v2.8/user-doc/html/_installation.html>`_::
 
-  .. code:: bash
+  ./configure --prefix=<path> --disable-mpi --enable-openmp --enable-modules=all
+  make -j6
+  make install
 
-     ./configure --prefix=<path> --disable-mpi --enable-openmp --enable-modules=all
+Here, ``<path>`` is the installation directory.
+Set the runtime environment, for example in your shell startup file:
 
-  Here, the :attr:`--prefix` determines the output directory of the build. Then make and install PLUMED:
+.. code:: bash
 
-  .. code:: bash
+  export PLUMED_KERNEL=<path>/lib/libplumedKernel.so
+  export LD_LIBRARY_PATH=<path>/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  export PATH=<path>/bin:$PATH
 
-     make -j6 && make install
+Replace ``<path>`` with the same installation directory and open a new shell if you edited its startup file.
 
-  Then update your environment variables (e.g., add the following lines to your bashrc file):
+Compile GPUMD
+-------------
 
-  .. code:: bash
+Append the following to ``src/makefile``:
 
-     export PLUMED_KERNEL=<path>/lib/libplumedKernel.so
-     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:<path>/lib
-     export PATH=$PATH:<path>/bin
+.. code:: make
 
-  where :attr:`<path>` should be replaced with the installation path for PLUMED (defined in :attr:`--prefix` of the ``./configure`` command). Finally, reopen your shell to apply changes.
-* Enable the PLUMED functionality.
-  To do this, one must enable the :attr:`USE_PLUMED` flag.
-  In the makefile, this will look as follows:
+  CFLAGS += -DUSE_PLUMED
+  INC += -I<path>/include
+  LDFLAGS += -L<path>/lib
+  LIBS += -lplumed -lplumedKernel
 
-  .. code:: make
-
-     CFLAGS = -std=c++14 -O3 $(CUDA_ARCH) -DUSE_PLUMED
-
-  In addition to that line the makefile must also be updated to the following:
-
-  .. code:: make
-
-     INC = -I<path>/include -I./
-     LDFLAGS = -L<path>/lib -lplumed -lplumedKernel
-
-  where :attr:`<path>` should be replaced with the installation path for PLUMED (defined in :attr:`--prefix` of the ``./configure`` command).
-* Follow the remaining :program:`GPUMD` installation instructions
-
-Following these steps will enable the :ref:`plumed keyword <kw_plumed>`.
+Run ``make clean`` in ``src``, then rebuild as described under :ref:`Compilation <compilation>`.
 
 .. _use_dp_in_gpumd:
 .. index::
@@ -169,150 +293,234 @@ Following these steps will enable the :ref:`plumed keyword <kw_plumed>`.
 DP potential support
 ====================
 
-Program introduction
---------------------
-This is the beginning of :program:`GPUMD` support for other machine learned interatomic potentials.
+The DP interface uses the DeePMD-kit C++ library and is enabled at compile time with ``USE_DEEPMD``.
 
-Necessary instructions
-~~~~~~~~~~~~~~~~~~~~~~
-- This is a test version.
-- Only potential function files ending with ``.pb`` in deepmd are supported, that is, the potential function files of the tensorflow version generated using ``dp --tf`` freeze.
+Supported model formats
+-----------------------
 
-Installation dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~
-- You must ensure that the new version of DP is installed and can run normally. This program contains DP-related dependencies.
-- The installation environment requirements of GPUMD itself must be met.
+* ``.pb``: TensorFlow backend.
+* ``.pth``: PyTorch TorchScript backend.
+* ``.pt2``: PyTorch AOTInductor backend.
+
+The installed DeePMD-kit version and backend must support the model being used.
+Follow the `model-freezing instructions <https://docs.deepmodeling.com/projects/deepmd/en/stable/freeze/freeze.html>`_ for that version to produce the appropriate file.
+The DeePMD-kit C++ API selects the backend from the model file.
+
+Install the DeePMD-kit C++ interface
+------------------------------------
+
+Install DeePMD-kit with the backend and GPU support required by your model, following its `installation documentation <https://docs.deepmodeling.com/projects/deepmd/en/stable/install/install-from-source.html#install-the-c-interface>`_.
+The GPUMD interface includes ``DeepPot.h`` and links to ``libdeepmd_cc``.
+Check that both the headers and the C++ library are installed; a working ``dp`` command alone does not verify their availability.
+Use a C++ compiler and ABI compatible with the installed DeePMD-kit library.
+
+Compile GPUMD
+-------------
+
+Use the ``src`` directory of the current `GPUMD repository <https://github.com/brucefan1983/GPUMD>`_.
+For a Linux installation with headers in ``<path>/include/deepmd`` and libraries in ``<path>/lib``, append the following after the existing flag definitions in ``src/makefile``:
+
+.. code:: make
+
+   CFLAGS += -DUSE_DEEPMD
+   INC += -I<path>/include/deepmd
+   LDFLAGS += -L<path>/lib -Xlinker=-rpath -Xlinker=<path>/lib
+   LIBS += -ldeepmd_cc
+
+Replace ``<path>`` with the DeePMD-kit installation prefix.
+If using a Python wheel, set the include and library paths to the actual locations supplied by that package.
+Keep the existing CUDA libraries in ``LIBS``. Adding ``-ldeepmd_cc`` to ``LIBS`` places it after the object files in the link command.
+The `DeePMD-kit C++ interface documentation <https://docs.deepmodeling.com/projects/deepmd/en/stable/inference/cxx.html>`_ describes backend and runtime library requirements.
+
+From ``src``, rebuild with the selected GPU architecture, for example:
+
+.. code:: bash
+
+   make clean
+   make gpumd -j CUDA_ARCH=-arch=sm_89
+
+This example targets an RTX 4090. If backend dependencies are installed in another directory, add that directory to the runtime library search path before running GPUMD, for example:
+
+.. code:: bash
+
+   export LD_LIBRARY_PATH=/path/to/backend/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+Run GPUMD
+---------
+
+The interface requires a setting file and a frozen DP model file.
+The setting file lists the number of atom types and their chemical symbols in exactly the same order as the model type map.
+For example, ``dp_settings.txt`` for a model with type map ``O H`` contains::
+
+   dp 2 O H
+
+Select one model in ``run.in``, for example::
+
+   potential dp_settings.txt frozen_model.pb
+
+For another backend, replace the model filename with the corresponding ``.pth`` or ``.pt2`` file.
+The model type map can be inspected with DeePMD-kit, for example:
+
+.. code:: bash
+
+   python -c "from deepmd.infer import DeepPot; print(DeepPot('frozen_model.pb').get_type_map())"
+
+Run the compiled ``gpumd`` executable from the directory containing ``run.in`` and ``model.xyz``.
+
+.. _use_nnap_in_gpumd:
+.. index::
+   single: NNAP Potential
+
+NNAP support
+============
+
+GPUMD supports NNAP (Neural-Network Atomic Potentials) through `jse <https://github.com/liqa1024/jse>`_.
+This interface is a development version.
+The instructions below describe a Linux build with CUDA.
+
+Prerequisites
+-------------
+
+In addition to the GPUMD build requirements, install jse 4.1.0 or newer with a working JNI build (``jse --jnibuild``).
+Prepare an NNAP model (``.json`` or ``.jnn``) and a corresponding GPUMD setting file as shown below.
+For the complete jse installation and usage guides, see `jse <https://github.com/liqa1024/jse>`_ and `jse-skill <https://github.com/liqa1024/jse-skill>`_.
+For support, contact Qing'an Li (liqa1024@vip.qq.com) or Ke Xu (twtdq@qq.com).
 
 Installation details
 --------------------
-Use the instance in AutoDL for testing. If one need testing use AutoDL, please contact Ke Xu (twtdq@qq.com).
 
-And we have created an image in `AutoDL <https://www.autodl.com/>`_ that can run GPUMD-DP directly, which can be shared with the account that provides the user ID. Then, you will not require the following process and can be used directly.
+Prepare the environment
+~~~~~~~~~~~~~~~~~~~~~~~
 
-GPUMD-DP installation (Offline version)
----------------------------------------
+Check the system environment::
 
-DP installation (Offline version)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Use the latest version of DP installation steps::
+  nvcc --version
 
-    >> $ # Copy data and unzip files.
-    >> $ cd /root/autodl-tmp/
-    >> $ wget https://mirror.nju.edu.cn/github-release/deepmodeling/deepmd-kit/v3.0.0/deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.0 -O deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.0
-    >> $ wget https://mirror.nju.edu.cn/github-release/deepmodeling/deepmd-kit/v3.0.0/deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.1 -O deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.1
-    >> $ cat deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.0 deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.1 > deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh
-    >> $ # rm deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.0 deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh.1 # Please use with caution "rm"
-    >> $ sh deepmd-kit-3.0.0-cuda126-Linux-x86_64.sh -p /root/autodl-tmp/deepmd-kit -u # Just keep pressing Enter/yes.
-    >> $ source /root/autodl-tmp/deepmd-kit/bin/activate /root/autodl-tmp/deepmd-kit
-    >> $ dp -h
+Set the installation directory::
 
-After running according to the above steps, using ``dp -h`` can successfully display no errors.
+  export install_dir="$HOME/software/GPUMD-NNAP"
+  mkdir -p ${install_dir}
+  cd ${install_dir}
 
-GPUMD-DP installation
-~~~~~~~~~~~~~~~~~~~~~
+Install jse
+~~~~~~~~~~~
 
-The GitHub link is `Here <https://github.com/Kick-H/GPUMD/tree/7af5267f4d8ba720830c154f11634a1942b66b08>`_.
-::
+Install jse from the dev channel to obtain the latest development version (for linux):
 
-    >> $ wget https://codeload.github.com/Kick-H/GPUMD/zip/7af5267f4d8ba720830c154f11634a1942b66b08
-    >> $ cd ${GPUMD}/src-v0.1
+.. code:: bash
 
-Modify ``makefile`` as follows:
+  bash <(curl -fsSL https://raw.githubusercontent.com/liqa1024/jse/dev/scripts/get.sh)
 
-- Line 19 is changed from ``CUDA_ARCH=-arch=sm_60`` to ``CUDA_ARCH=-arch=sm_89`` (for RTX 4090). Modify according to the corresponding graphics card model.
-- Line 25 is changed from ``INC = -I./`` to ``INC = -I./ -I/root/miniconda3/deepmd-kit/source/build/path_to_install/include/deepmd``
-- Line 27 is changed from ``LIBS = -lcublas -lcusolver`` to ``LIBS = -lcublas -lcusolver -L/root/miniconda3/deepmd-kit/source/build/path_to_install/lib -ldeepmd_cc``
+Optionally, manually run the JNI build to detect any potential environment issues in advance:
 
-Then run the following installation command::
+.. code:: bash
 
-    >> $ sudo echo "export LD_LIBRARY_PATH=/root/miniconda3/deepmd-kit/source/build/path_to_install/lib:$LD_LIBRARY_PATH" >> /root/.bashrc
-    >> $ source /root/.bashrc
-    >> $ make gpumd -j
+  jse --jnibuild
+  jse -t 'jse.gpu.CudaCore.InitHelper.init()'
 
-Running tests
-~~~~~~~~~~~~~
-::
 
-    >> $ cd /root/miniconda3/GPUMD-bu0/tests/dp
-    >> $ ../../src/gpumd
+Configure and compile GPUMD-NNAP
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-GPUMD-DP installation (Online version)
---------------------------------------
+.. tabs::
 
-Introduction
-~~~~~~~~~~~~
-This is to use the online method to install the `GPUMD-DP` version, you need to connect the machine to the Internet and use github and other websites.
+   .. tab:: Make
 
-Conda environment
-~~~~~~~~~~~~~~~~~
-Create a new conda environment with Python and activate it::
+      Detect the required paths using ``jse`` and export them as environment variables:
 
-    >> $ conda create -n tf-gpu2  python=3.9
-    >> $ conda install -c conda-forge cudatoolkit=11.8
-    >> $ pip install --upgrade tensorflow
+      .. code:: bash
 
-Download deep-kit and install
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Download DP source code and compile the source files following DP docs. Here are the cmake commands::
+        export JSE_JAR_PATH=$(jse -t 'println(jse.code.OS.JAR_PATH)')
+        export JVM_INCLUDE=$(jse -t 'println(jse.clib.JVM.INCLUDE_DIR)')
+        export JVM_LLIB_DIR=$(jse -t 'println(jse.clib.JVM.LLIB_DIR)')
 
-    >> $ git clone https://github.com/deepmodeling/deepmd-kit.git
-    >> $ cd deepmd-kit/source
-    >> $ mkdir build && cd build
-    >> $ cmake -DENABLE_TENSORFLOW=TRUE -DUSE_CUDA_TOOLKIT=TRUE -DCMAKE_INSTALL_PREFIX=`path_to_install` -DUSE_TF_PYTHON_LIBS=TRUE ../
-    >> $ make -j && make install
+      Enable NNAP support and add the jse class path by modifying ``CFLAGS``:
 
-We just need the DP C++ interface, so we don't source all DP environment. The libraries will be installed in ``path_to_install``.
+      .. code:: make
 
-Configure the GPUMD makefile
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The GitHub link is `Here <https://github.com/Kick-H/GPUMD/tree/7af5267f4d8ba720830c154f11634a1942b66b08>`_.
-::
+        CFLAGS += -DUSE_NNAP -DJVM_CLASS_PATH=\"-Djava.class.path=$(JSE_JAR_PATH)\"
 
-    >> $ wget https://codeload.github.com/Kick-H/GPUMD/zip/7af5267f4d8ba720830c154f11634a1942b66b08
-    >> $ cd ${GPUMD}/src
-    >> $ vi makefile
+      Add the JVM header paths by modifying ``INC``:
 
-Configure the makefile of GPUMD. The DP code is included by macro definition ``USE_TENSORFLOW``. So add it to ``CFLAGS``:
+      .. code:: make
 
-``CFLAGS = -std=c++14 -O3 $(CUDA_ARCH) -DUSE_TENSORFLOW``
+        INC += -I$(JVM_INCLUDE) -I$(JVM_INCLUDE)/linux
 
-Then link the DP C++ libraries. Add the following two lines to update the include and link paths and compile GPUMD:
+      Here ``$(JVM_INCLUDE)/linux`` corresponds to Linux; for other systems, replace it with the corresponding platform directory.
 
-``INC += -Ipath_to_install/include/deepmd``
+      Add the JVM library search paths and library:
 
-``LDFLAGS += -Lpath_to_install/lib -ldeepmd_cc``
+      .. code:: make
 
-Then, you can install it using the following command::
+        LDFLAGS += -L$(JVM_LLIB_DIR) -Xlinker -rpath -Xlinker $(JVM_LLIB_DIR)
+        LIBS += -ljvm
 
-    >> $ make gpumd -j
+      Here, ``JSE_JAR_PATH``, ``JVM_INCLUDE``, and ``JVM_LLIB_DIR`` should be
+      replaced by the actual paths obtained from the jse commands above, or exported
+      as environment variables before running ``make``.
 
-Run GPUMD
-~~~~~~~~~
+      Rebuild the MD executable from the ``src`` directory:
 
-When running GPUMD, if an error occurs stating that the DP libraries could not be found, add the library path temporarily with::
+      .. code:: bash
 
-    LD_LIBRARY_PATH=path_to_install/lib:$LD_LIBRARY_PATH
+        make clean
+        make gpumd -j
 
-Or add the environment permanently to the ``~/.bashrc``::
+      If compilation is successful, the ``gpumd`` executable is generated.
 
-    >> $ sudo echo "export LD_LIBRARY_PATH=/root/miniconda3/deepmd-kit/source/build/path_to_install/lib:$LD_LIBRARY_PATH" >> ~/.bashrc
-    >> $ source ~/.bashrc
+   .. tab:: CMake (pre-release)
 
-Run Test
-~~~~~~~~
+      CMake uses ``PKG_NNAP`` to control NNAP support:
 
-This DP interface requires two files: a setting file and a DP potential file. The first file is very simple and is used to inform GPUMD of the atom number and types. For example, the ``dp.txt`` is shown in here for use the ``potential dp.txt DP_POTENTIAL_FILE.pb`` command in the ``run.in`` file::
+      .. code-block:: bash
 
-    dp 2 O H
+        -D PKG_NNAP=yes
 
-Notice
-~~~~~~
-The type list in the setting file and the potential file must be the same.
+      Add environment variable to import jse jar path:
 
-Example
-~~~~~~~
-* Some water simulations using the ``DP`` model in ``GPUMD``: https://github.com/brucefan1983/GPUMD/discussions
+      .. code:: bash
+
+        export JSE_JAR_PATH=$(jse -t 'println(jse.code.OS.JAR_PATH)')
+
+      In Windows, you need to additionally specify the JVM library path (PowerShell):
+
+      .. code:: bash
+
+        $env:JSE_JAR_PATH = "$(jse -t 'println(jse.code.OS.JAR_PATH)')"
+        $env:JVM_LIB_PATH = "$(jse -t 'println(jse.clib.JVM.LIB_PATH)')"
+
+
+Run the NNAP test
+-----------------
+
+In the GPUMD input file, use the NNAP potential as follows:
+
+.. code::
+
+  potential nnap.txt CuZr-sphs.json
+
+An example GPUMD setting file ``nnap.txt`` file is:
+
+.. code::
+
+  nnap 2 Cu Zr
+
+The element order in ``nnap.txt`` must be consistent with that in the NNAP potential
+file ``CuZr-sphs.json``.
+
+For example, if the NNAP potential file uses the element order ``Zr Cu``, then
+``nnap.txt`` should be written as:
+
+.. code::
+
+  nnap 2 Zr Cu
+
+Run the test with::
+
+  gpumd
 
 References
 ~~~~~~~~~~
-* DeePMD-kit: https://github.com/deepmodeling/deepmd-kit
+* jse: https://github.com/liqa1024/jse
+* jse-skill: https://github.com/liqa1024/jse-skill
+* jsex-NNAP: https://github.com/liqa1024/jsex-NNAP

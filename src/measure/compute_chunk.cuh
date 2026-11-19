@@ -2,30 +2,30 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 #pragma once
-#include "property.cuh"
+#include "action.cuh"
 #include "model/box.cuh"
 #include "utilities/gpu_vector.cuh"
 #include <string>
 #include <vector>
 
-class ComputeChunk : public Property
+class ComputeChunk : public Action
 {
 public:
-  ComputeChunk(const char** param, int num_param, Box& box);
+  ComputeChunk(const std::vector<std::string>& tokens, Box& box);
 
-  virtual void preprocess(
+  virtual void pre_run(
     const int number_of_steps,
     const double time_step,
     Integrate& integrate,
@@ -34,7 +34,7 @@ public:
     Box& box,
     Force& force) override;
 
-  virtual void process(
+  virtual void end_of_step(
     const int number_of_steps,
     int step,
     const int fixed_group,
@@ -48,7 +48,7 @@ public:
     Atom& atom,
     Force& force) override;
 
-  virtual void postprocess(
+  virtual void post_run(
     Atom& atom,
     Box& box,
     Integrate& integrate,
@@ -62,18 +62,18 @@ private:
   int output_interval_ = 1;
 
   // Bin configuration
-  int dim_;                      // 1 = bin/1d, 2 = bin/2d, 3 = bin/3d
-  int axis_[3];                  // Which axes to bin: 0=x, 1=y, 2=z
-  double origin_[3];             // Bin origin coordinates
-  double delta_[3];              // Bin width per dimension
-  double invdelta_[3];           // 1/delta for fast binning
-  int nlayers_[3];               // Number of bins per dimension
-  double box_length_[3];         // Box length along each binned axis
-  int nchunk_;                   // Total number of chunks
-  int ncoord_;                   // Number of coordinates per chunk (= dim_)
+  int dim_;              // 1 = bin/1d, 2 = bin/2d, 3 = bin/3d
+  int axis_[3];          // Which axes to bin: 0=x, 1=y, 2=z
+  double origin_[3];     // Bin origin coordinates
+  double delta_[3];      // Bin width per dimension
+  double invdelta_[3];   // 1/delta for fast binning
+  int nlayers_[3];       // Number of bins per dimension
+  double box_length_[3]; // Box length along each binned axis
+  int nchunk_;           // Total number of chunks
+  int ncoord_;           // Number of coordinates per chunk (= dim_)
 
   // Chunk assignments (GPU)
-  GPU_Vector<int> ichunk_;       // ichunk_[i] = chunk ID for atom i
+  GPU_Vector<int> ichunk_; // ichunk_[i] = chunk ID for atom i
 
   // Chunk geometry (CPU)
   std::vector<double> chunk_volume_cpu_;
@@ -101,8 +101,8 @@ private:
   // Output
   FILE* fid_ = nullptr;
 
-  void parse(const char** param, int num_param, Box& box);
-  int parse_bin_params(const char** param, int num_param, int start, Box& box);
+  void parse(const std::vector<std::string>& tokens, Box& box);
+  int parse_bin_params(const std::vector<std::string>& tokens, int num_param, int start, Box& box);
   void assign_chunks(const Atom& atom, const Box& box);
   void sample(const Atom& atom);
   void output_results(int step);

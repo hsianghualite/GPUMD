@@ -25,7 +25,7 @@ struct Molecular_Hessian_Device_Data;
 class Ensemble_QCT : public Ensemble
 {
 public:
-  Ensemble_QCT(const char** param, int num_param);
+  Ensemble_QCT(const std::vector<std::string>& tokens);
   virtual ~Ensemble_QCT(void);
 
   virtual void initialize_before_run(
@@ -37,6 +37,8 @@ public:
 
   virtual void compute1(
     const double time_step,
+    const int step,
+    const int number_of_steps,
     const std::vector<Group>& group,
     Box& box,
     Atom& atom,
@@ -44,10 +46,13 @@ public:
 
   virtual void compute2(
     const double time_step,
+    const int step,
+    const int number_of_steps,
     const std::vector<Group>& group,
     Box& box,
     Atom& atom,
-    GPU_Vector<double>& thermo);
+    GPU_Vector<double>& thermo,
+    Force& force);
 
   bool is_batch() const { return replicas_ > 1; }
   int number_of_replicas() const { return replicas_; }
@@ -138,8 +143,8 @@ private:
   QCT_Modes qct_modes_;
   bool qct_modes_stored_ = false;
 
-  void parse_harmonic(const char** param, int num_param);
-  void parse_phase_point(const char** param, int num_param);
+  void parse_harmonic(const std::vector<std::string>& tokens);
+  void parse_phase_point(const std::vector<std::string>& tokens);
   QCT_Modes read_qct_modes(const Atom& atom) const;
   QCT_Modes read_gpumd_modes(const Atom& atom, const Box& box) const;
   QCT_Modes build_automatic_modes(

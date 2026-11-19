@@ -5,17 +5,17 @@
 
 #pragma once
 
-#include "property.cuh"
+#include "action.cuh"
 #include <cstdint>
 #include <string>
 #include <vector>
 
-class Dump_QCT : public Property
+class Dump_QCT : public Action
 {
 public:
-  Dump_QCT(const char** param, int num_param);
+  explicit Dump_QCT(const std::vector<std::string>& tokens);
 
-  virtual void preprocess(
+  virtual void pre_run(
     const int number_of_steps,
     const double time_step,
     Integrate& integrate,
@@ -24,7 +24,7 @@ public:
     Box& box,
     Force& force);
 
-  virtual void process(
+  virtual void end_of_step(
     const int number_of_steps,
     int step,
     const int fixed_group,
@@ -49,7 +49,7 @@ public:
     Atom& atom,
     Force& force);
 
-  virtual void postprocess(
+  virtual void post_run(
     Atom& atom,
     Box& box,
     Integrate& integrate,

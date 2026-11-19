@@ -7,7 +7,11 @@
 
 This file enables restarting an optimization run.
 If the file is present, training will start from the state saved in this file.
-The file is continuously updated during training.
+The file is overwritten every :ref:`output_interval <kw_output_interval>` generations (100 by default).
 
-The user does not need to understand the contents of this file.
-One must, however, ensure that the hyperparameters in the :ref:`nep.in input file <nep_in>` related to the descriptor are the same as those used to generate the restart file.
+The file uses the `NEP restart format
+<https://github.com/brucefan1983/GPUMD/blob/master/potentials/nep/nep_model_format.md#6-neprestart>`_.
+
+Remove this file to start a new training run rather than resuming.
+
+For spin models, keep the matching :ref:`nep.txt <nep_txt>` alongside ``nep.restart``.

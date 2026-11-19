@@ -5,36 +5,59 @@
 :attr:`add_force`
 =================
 
-This keyword is used to add force on atoms in a selected group at each step during a run.
+Add an external force to each atom in a selected group during a run.
 
 Syntax
 ------
 
-This keyword is used in one of the following two ways::
+::
 
-  add_force <group_method> <group_id> <Fx> <Fy> <Fz> # usage 1
-  add_force <group_method> <group_id> <add_force_file> # usage 2
+  add_force <group_method> <group_id> <Fx> <Fy> <Fz>
+  add_force <group_method> <group_id> <add_force_file>
 
-* Force is added to atoms in group :attr:`group_id` of group method :attr:`group_method`.
-* In the first usage, the constant force with components :attr:`Fx`, :attr:`Fy`, and :attr:`Fz` is added on each selected atom.
-* In the second usage, a series of forces specified in the file :attr:`add_force_file` will be periodically added on each selected atom.
-* Force is in units of eV/Å.
+Parameters
+----------
 
-Example 1
----------
+* ``group_method`` and ``group_id``: Select a group defined in :ref:`model.xyz <grouping_methods>`.
+* ``Fx``, ``Fy``, and ``Fz``: Cartesian components of a constant force, in eV/Å, applied to each selected atom.
+* ``add_force_file``: File containing a sequence of force vectors, in eV/Å, applied periodically to each selected atom.
+  Its format is::
 
-Add a constant force of 0.1 eV/Å in the x direction on atoms in group 1 of group method 2::
+    N
+    Fx(0) Fy(0) Fz(0)
+    Fx(1) Fy(1) Fz(1)
+    ...
+    Fx(N-1) Fy(N-1) Fz(N-1)
 
-   add_force 2 1 0.1 0 0
+  The first line gives the number of vectors, :math:`N\geq2`, followed by one vector per line.
+  Vector 0 is used at the initial force evaluation (:math:`t=0`).
+  At :math:`t=n\Delta t`, vector :math:`n\bmod N` is used.
 
-Example 2
----------
+Output
+------
 
-Add force on atoms in group 2 of group method 0, where the file :attr:`add_force.txt` contains a number of rows of 3 values specifying a sequence of force vectors to be periodically applied during the run::
+None.
 
-   add_force 0 2 add_force.txt
+Examples
+--------
 
-Note
-----
+Apply a constant force of 0.1 eV/Å along x to each atom in group 1 of grouping method 2::
 
-This keyword can be used multiple times during a run.
+  add_force 2 1 0.1 0 0
+
+Apply a repeating force sequence to group 2 of grouping method 0::
+
+  add_force 0 2 add_force.txt
+
+For example, ``add_force.txt`` can contain three vectors::
+
+  3
+  0.10 0.00 0.00
+  0.00 0.10 0.00
+  0.00 0.00 0.10
+
+Notes
+-----
+
+This command can be used multiple times for one run.
+Repeat it before each subsequent run that requires the force.

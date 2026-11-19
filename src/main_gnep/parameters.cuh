@@ -2,64 +2,76 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 #pragma once
 #include "utilities/gpu_vector.cuh"
+#include <memory>
 #include <string>
 #include <vector>
+
+struct GNEPDeviceScaler {
+  explicit GNEPDeviceScaler(const int id) : device_id(id) {}
+  ~GNEPDeviceScaler() { cudaSetDevice(device_id); }
+
+  int device_id;
+  GPU_Vector<float> q_scaler;
+  GPU_Vector<float> s_max;
+  GPU_Vector<float> s_min;
+};
 
 class Parameters
 {
 public:
   Parameters();
+  ~Parameters();
 
   // parameters to be read in
-  int batch_size;         // number of configurations in one batch
-  int use_full_batch;     // 1 for effective full-batch even though batch_size is not full-batch
-  int num_types;          // number of atom types
-  int epoch;              // maximum number of epochs for training
-  int num_neurons1;       // number of nuerons in the 1st hidden layer (only one hidden layer)
-  int basis_size_radial;  
-  int basis_size_angular; 
-  int n_max_radial;       // maximum order of the radial Chebyshev polynomials
-  int n_max_angular;      // maximum order of the angular Chebyshev polynomials
-  int L_max;              // maximum order of the 3body spherical harmonics
-  float weight_decay;     // Adam with decoupled weight decay (AdamW)
-  float lr;               // current learning rate
-  float start_lr;         // start learning rate
-  float stop_lr;          // stop learning rate
-  float lambda_e;         // weight parameter for energy RMSE loss
-  float lambda_f;         // weight parameter for force RMSE loss
-  float lambda_v;         // weight parameter for virial RMSE loss
-  float lambda_shear;     // extra weight parameter for shear virial
-  float force_delta;      // a parameters used to modify the force loss
-  bool enable_zbl;        // true for inlcuding the universal ZBL potential
-  bool flexible_zbl;      // true for inlcuding the flexible ZBL potential
-  float zbl_rc_inner;     // inner cutoff for the universal ZBL potential
-  float zbl_rc_outer;     // outer cutoff for the universal ZBL potential
-  int energy_shift;  // 1 for using energy shift for biased initialization of neural networks
-  int prediction; // 0=no, 1=yes
+  int batch_size;     // number of configurations in one batch
+  int use_full_batch; // 1 for effective full-batch even though batch_size is not full-batch
+  int num_types;      // number of atom types
+  int epoch;          // maximum number of epochs for training
+  int num_neurons1;   // number of nuerons in the 1st hidden layer (only one hidden layer)
+  int basis_size_radial;
+  int basis_size_angular;
+  int n_max_radial;   // maximum order of the radial Chebyshev polynomials
+  int n_max_angular;  // maximum order of the angular Chebyshev polynomials
+  int L_max;          // maximum order of the 3body spherical harmonics
+  float weight_decay; // Adam with decoupled weight decay (AdamW)
+  float lr;           // current learning rate
+  float start_lr;     // start learning rate
+  float stop_lr;      // stop learning rate
+  float lambda_e;     // weight parameter for energy RMSE loss
+  float lambda_f;     // weight parameter for force RMSE loss
+  float lambda_v;     // weight parameter for virial RMSE loss
+  float lambda_shear; // extra weight parameter for shear virial
+  float force_delta;  // a parameters used to modify the force loss
+  bool enable_zbl;    // true for inlcuding the universal ZBL potential
+  bool flexible_zbl;  // true for inlcuding the flexible ZBL potential
+  float zbl_rc_inner; // inner cutoff for the universal ZBL potential
+  float zbl_rc_outer; // outer cutoff for the universal ZBL potential
+  int energy_shift;   // 1 for using energy shift for biased initialization of neural networks
+  int prediction;     // 0=no, 1=yes
   bool use_typewise_cutoff_zbl;
   float typewise_cutoff_zbl_factor;
   int output_descriptor;
+  int seed;
 
   // learning rate scheduler (cosine annealing with warmup restarts)
-  int lr_restart_enable;                 // 0=off(use cosine), 1=on(use cosine with restarts)
-  int lr_warmup_epochs;                  // warmup epochs before scheduler starts
-  int lr_restart_initial_period_epochs;  // initial restart period in epochs
-  float lr_restart_period_factor;        // factor to scale period length per cycle
-  float lr_restart_decay_factor;         // factor to decay cycle max lr per cycle
-  
+  int lr_restart_enable;                // 0=off(use cosine), 1=on(use cosine with restarts)
+  int lr_warmup_epochs;                 // warmup epochs before scheduler starts
+  int lr_restart_initial_period_epochs; // initial restart period in epochs
+  float lr_restart_period_factor;       // factor to scale period length per cycle
+  float lr_restart_decay_factor;        // factor to decay cycle max lr per cycle
 
   // check if a parameter has been set:
   bool is_prediction_set;
@@ -84,6 +96,7 @@ public:
   bool is_use_typewise_cutoff_zbl_set;
   bool is_energy_shift_set;
   bool is_lr_cos_restart_set;
+  bool is_seed_set;
 
   // other parameters
   int dim;                            // dimension of the descriptor vector
@@ -106,10 +119,19 @@ public:
   float rc_angular_max = 0.0f;        // maximal angular cutoff
   bool has_multiple_cutoffs = false;
 
-  GPU_Vector<float> q_scaler_gpu[16]; // used to scale some descriptor components (GPU)
-  GPU_Vector<float> s_max[16];        // used to scale some descriptor components (GPU)
-  GPU_Vector<float> s_min[16];        // used to scale some descriptor components (GPU)
-  GPU_Vector<float> energy_shift_gpu; // Energy shift for biased initialization of neural networks (GPU)
+private:
+  // Declared before the GPU-0-only buffer so the latter is destroyed first.
+  std::vector<std::unique_ptr<GNEPDeviceScaler>> device_scalers;
+
+public:
+  GPU_Vector<float>
+    energy_shift_gpu; // Energy shift for biased initialization of neural networks (GPU)
+
+  GPU_Vector<float>& q_scaler_gpu(int device_id);
+  GPU_Vector<float>& s_max_gpu(int device_id);
+  GPU_Vector<float>& s_min_gpu(int device_id);
+  int num_devices() const;
+  void reduce_and_broadcast_scaler();
 
 private:
   void set_default_parameters();
@@ -143,4 +165,5 @@ private:
   void parse_energy_shift(const char** param, int num_param);
   void parse_output_descriptor(const char** param, int num_param);
   void parse_lr_cos_restart(const char** param, int num_param);
+  void parse_seed(const char** param, int num_param);
 };
