@@ -4,42 +4,66 @@
 =======================
 
 The :attr:`ensemble` keyword is used to set up an integration method (an integrator).
-The integrators described on this page enable one to carry out path integral molecular dynamics (:term:`PIMD`) simulations and thereby to incorporate quantum dynamical effects.
-
+The :attr:`pimd` and :attr:`pimd_scr` integrators incorporate nuclear quantum effects in equilibrium properties using path integral molecular dynamics (:term:`PIMD`).
+The :attr:`rpmd` and :attr:`trpmd` integrators provide approximate real-time quantum dynamics [Craig2004]_ [Rossi2014]_.
 
 Syntax
 ------
 
-:attr:`pimd`
-^^^^^^^^^^^^
-If the first parameter is :attr:`pimd`, it means that the current run will use path-integral molecular dynamics (:term:`PIMD`).
+::
 
-It can be used in the following ways::
+  ensemble pimd <num_beads> <T_1> <T_2> <T_coup> [<pressure_control_parameters>] [eco <omega_max>]
+  ensemble pimd_scr <num_beads> <T_1> <T_2> <T_coup> <pressure_control_parameters> [eco <omega_max>]
+  ensemble rpmd <num_beads>
+  ensemble trpmd <num_beads>
 
-    ensemble pimd <num_beads> <T_1> <T_2> <T_coup> 
-    ensemble pimd <num_beads> <T_1> <T_2> <T_coup> {<pressure_control_parameters>}
+Parameters
+----------
 
-In both cases, :attr:`num_beads` is the number of beads in the ring polymer, which should be a positive even integer no larger than 128.
-The first case is similar to the NVT ensemble with :attr:`nvt_lan` as the Langevin thermostat is used for both the internal and the centroid modes [Ceriotti2010]_. 
-The second case is similar to the NPT ensemble with :attr:`npt_ber`, where a Berendsen barostat is added compared to the first case.
-Note that :attr:`pimd` (that is, not :attr:`rpmd` or :attr:`trpmd` described below) must be the first run that requires to set :attr:`num_beads` and one cannot change :attr:`num_beads` from run to run.
+``num_beads`` is the number of beads in the ring polymer. It must be even and between 2 and 128.
 
-:attr:`rpmd`
-^^^^^^^^^^^^
-If the first parameter is :attr:`rpmd`, it means that the current run will use ring-polymer molecular dynamics (:term:`RPMD`) [Craig2004]_.
+``T_1`` and ``T_2`` are the initial and final target temperatures in K and must be positive.
+The target changes linearly during the run; use equal values for a constant temperature.
+``T_coup`` is the thermostat relaxation time in time steps and must be at least 1.
 
-It can be used as follows::
+``pimd`` applies a Langevin thermostat to both the internal and centroid modes [Ceriotti2010]_.
+Without pressure parameters, the simulation cell is fixed.
+Adding pressure parameters enables a Berendsen barostat.
+``pimd_scr`` requires pressure parameters and uses stochastic cell rescaling instead.
+Both accept the same three :ref:`pressure-control parameter forms <standard_pressure_parameters>` as the standard NPT integrators: isotropic, independent box lengths, and triclinic.
+Pressures and elastic moduli are in GPa; ``p_coup`` is in time steps.
 
-    ensemble rpmd <num_beads> 
+``rpmd`` evolves the ring polymer without a thermostat.
+``trpmd`` applies a Langevin thermostat only to the internal modes, leaving the centroid mode unthermostatted.
 
-This can be understood as the NVE version of :term:`PIMD`, where no thermostat is applied.
+Appending ``eco <omega_max>`` to ``pimd`` or ``pimd_scr`` selects economised path-integral internal-mode frequencies [Zeng2026]_.
+``omega_max`` is a positive maximum physical vibrational wavenumber in cm\ :sup:`-1`.
+The dimensionless fitting range is :math:`x_{\max}=hc\omega_{\max}/(k_{\rm B}T)` and follows the target temperature during a ramp.
+Without ``eco``, GPUMD uses the original Trotter internal-mode frequencies.
+``rpmd`` and ``trpmd`` always use the original Trotter frequencies.
 
-:attr:`trpmd`
-^^^^^^^^^^^^^
-If the first parameter is :attr:`trpmd`, it means that the current run will use thermostatted ring-polymer molecular dynamics (:term:`TRPMD`) [Rossi2014]_.
+Output
+------
 
-It can be used as follows::
+None.
 
-    ensemble trpmd <num_beads> 
+Examples
+--------
 
-This is similar to :term:`RPMD`, but the Langevin thermosat is applied to the internal modes.
+Run PIMD with 32 beads at a fixed target temperature of 300 K::
+
+  ensemble pimd 32 300 300 100
+
+Use isotropic stochastic cell rescaling at 0 GPa, with an estimated modulus of 100 GPa::
+
+  ensemble pimd_scr 32 300 300 100 0 100 1000
+
+Enable Eco frequencies at fixed cell with a maximum wavenumber of 4000 cm\ :sup:`-1`::
+
+  ensemble pimd 32 300 300 100 eco 4000
+
+Notes
+-----
+
+Initialize the ring polymer with a ``pimd`` or ``pimd_scr`` run before using ``rpmd`` or ``trpmd``.
+The number of beads cannot change between runs.

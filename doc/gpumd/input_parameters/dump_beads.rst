@@ -5,12 +5,40 @@
 :attr:`dump_beads`
 ==================
 
+Write bead positions and optional velocities and forces in a PIMD run.
+
+Syntax
+------
+
+.. code::
+
+   dump_beads <interval> <has_velocity> <has_force>
+
+Parameters
+----------
+
+* :attr:`interval` is a positive integer giving the output interval in MD steps.
+* :attr:`has_velocity` is an integer flag: 0 omits velocities, and a nonzero value includes them.
+* :attr:`has_force` is an integer flag: 0 omits forces, and a nonzero value includes them.
+
+Positions are always included. All three parameters are required.
+
+Output
+------
+
 Write some data (positions and optionally velocities and forces) into `beads_dump_<k>.xyz` in `extended XYZ format <https://github.com/libAtoms/extxyz>`_, where `<k>` runs from 0 to `number_of_beads - 1` as set in a run related to path-integral molecular dynamics (:term:`PIMD`).
 Each file thus contains the data for one bead.
 The comment line of each frame carries the time, the periodic boundary flags, and the cell.
 
-Caveats
--------
+Examples
+--------
+
+To write positions and velocities for every bead every 100 steps, use::
+
+   dump_beads 100 1 0
+
+Notes
+-----
 
 * The centroid data (the average over all the beads) for the ring polymer in PIMD-related runs are still output by the :ref:`dump_xyz keyword <kw_dump_xyz>`.
 

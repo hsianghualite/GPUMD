@@ -2,16 +2,21 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
+
+/*----------------------------------------------------------------------------80
+Major contributors:
+  Hongfu Huang: Initial implementation.
+------------------------------------------------------------------------------*/
 
 #include "dataset.cuh"
 #include "mic.cuh"
@@ -19,7 +24,14 @@
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
 #include "utilities/gnep_utilities.cuh"
-#include <algorithm> 
+#include <algorithm>
+
+Dataset::~Dataset()
+{
+  if (device_id >= 0) {
+    cudaSetDevice(device_id);
+  }
+}
 
 void Dataset::copy_structures(std::vector<Structure>& structures_input, int n1, int n2)
 {
@@ -121,7 +133,12 @@ void Dataset::find_Na(Parameters& para)
   Na_sum.copy_from_host(Na_sum_cpu.data());
 }
 
-static __global__ void gpu_find_batch_idx(const int N, const int Nc, const int* __restrict__ g_Na, const int* __restrict__ g_Na_sum, int* g_batch_index)
+static __global__ void gpu_find_batch_idx(
+  const int N,
+  const int Nc,
+  const int* __restrict__ g_Na,
+  const int* __restrict__ g_Na_sum,
+  int* g_batch_index)
 {
   int n1 = threadIdx.x + blockIdx.x * blockDim.x;
   if (n1 < N) {
@@ -158,7 +175,7 @@ void Dataset::initialize_gpu_data(Parameters& para)
   for (int n = 0; n < Nc; ++n) {
     weight_cpu[n] = structures[n].weight;
     energy_ref_cpu[n] = structures[n].energy / structures[n].num_atom;
-    sum_energy_ref += structures[n].energy; 
+    sum_energy_ref += structures[n].energy;
     for (int k = 0; k < 6; ++k) {
       virial_ref_cpu[k * Nc + n] = structures[n].virial[k] / structures[n].num_atom;
     }
@@ -197,7 +214,6 @@ void Dataset::initialize_gpu_data(Parameters& para)
   virial_ref_gpu.copy_from_host(virial_ref_cpu.data());
   force_ref_gpu.copy_from_host(force_ref_cpu.data());
   temperature_ref_gpu.copy_from_host(temperature_ref_cpu.data());
-
 
   box.resize(Nc * 18);
   box_original.resize(Nc * 9);
@@ -346,8 +362,14 @@ void Dataset::find_neighbor(Parameters& para)
 }
 
 void Dataset::construct(
-  Parameters& para, std::vector<Structure>& structures_input, bool require_grad, int n1, int n2, int device_id)
+  Parameters& para,
+  std::vector<Structure>& structures_input,
+  bool require_grad,
+  int n1,
+  int n2,
+  int device_id)
 {
+  this->device_id = device_id;
   CHECK(cudaSetDevice(device_id));
   copy_structures(structures_input, n1, n2);
   find_has_type(para);
@@ -366,11 +388,7 @@ void Dataset::construct(
     const int block_size = 32;
     const int grid_size = (N - 1) / block_size + 1;
     gpu_find_batch_idx<<<grid_size, block_size>>>(
-      N,
-      Nc,
-      Na.data(),
-      Na_sum.data(),
-      batch_idx.data());
+      N, Nc, Na.data(), Na_sum.data(), batch_idx.data());
     GPU_CHECK_KERNEL
   }
 }
@@ -477,10 +495,7 @@ std::vector<float> Dataset::get_mse_force(Parameters& para, const bool use_weigh
   return mse_array;
 }
 
-std::vector<float> Dataset::get_mse_energy(
-  Parameters& para,
-  const bool use_weight,
-  int device_id)
+std::vector<float> Dataset::get_mse_energy(Parameters& para, const bool use_weight, int device_id)
 {
   CHECK(cudaSetDevice(device_id));
 

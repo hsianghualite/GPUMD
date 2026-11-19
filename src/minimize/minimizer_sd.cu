@@ -2,24 +2,27 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
 The SD (steepest decent) minimizer.
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
 ------------------------------------------------------------------------------*/
 
 #include "force/force.cuh"
-#include "model/atom.cuh"
 #include "minimizer_sd.cuh"
+#include "model/atom.cuh"
 #include "utilities/gpu_macro.cuh"
 #include <cstring>
 
@@ -75,7 +78,13 @@ void Minimizer_SD::compute(
   std::vector<Group>& group)
 {
   force.compute(
-    box, position_per_atom, atom.type, group, atom.potential_per_atom, atom.force_per_atom, atom.virial_per_atom);
+    box,
+    position_per_atom,
+    atom.type,
+    group,
+    atom.potential_per_atom,
+    atom.force_per_atom,
+    atom.virial_per_atom);
 
   int number_of_force_evaluations = 1;
   double position_step = 0.1;
@@ -134,7 +143,6 @@ void Minimizer_SD::compute(
       potential_per_atom_temp_.copy_to_device(atom.potential_per_atom.data());
       position_step *= increasing_factor;
     }
-
 
     double total_potential_smaller = (cpu_total_potential_[1] > cpu_total_potential_[0])
                                        ? cpu_total_potential_[0]

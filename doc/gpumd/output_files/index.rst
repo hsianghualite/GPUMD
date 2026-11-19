@@ -4,6 +4,10 @@
 Output files
 ============
 
+Output files are created by the commands listed below.
+**Append** keeps existing data and adds new results; **Overwrite** replaces existing contents.
+A file page describes its columns, units, and any headers or blocks needed to separate runs.
+
 .. list-table::
    :header-rows: 1
    :width: 100%
@@ -49,9 +53,29 @@ Output files
      - :ref:`dump_polarizability <kw_dump_polarizability>`
      - Predicted polarizability
      - Append
+   * - ``beads_dump_<k>.xyz`` (:ref:`details <kw_dump_beads>`)
+     - :ref:`dump_beads <kw_dump_beads>`
+     - Per-bead trajectories for PIMD-related runs
+     - Append
    * - :ref:`compute.out <compute_out>`
      - :ref:`compute <kw_compute>`
      - Time and space (group) averaged quantities
+     - Append
+   * - :ref:`compute_chunk.out <compute_chunk_out>`
+     - :ref:`compute_chunk <kw_compute_chunk>`
+     - Time-averaged quantities in dynamic spatial bins
+     - Append
+   * - :ref:`hessian.out <hessian_out>`
+     - :ref:`compute_hessian <kw_compute_hessian>`
+     - Analytic Cartesian Hessian
+     - Overwrite
+   * - :ref:`elastic.out <elastic_out>`
+     - :ref:`compute_elastic <kw_compute_elastic>`
+     - Elastic constants
+     - Overwrite
+   * - :ref:`extrapolation_dump.xyz <extrapolation_dump_xyz>`
+     - :ref:`compute_extrapolation <kw_compute_extrapolation>`
+     - Structures selected by the NEP extrapolation grade
      - Append
    * - :ref:`ttm_electron_temperature.out <ttm_electron_temperature_out>`
      - :ref:`ensemble <kw_ensemble>` with :attr:`ttm` or :attr:`heat_ttm`
@@ -83,7 +107,7 @@ Output files
      - Append
    * - :ref:`dpdt.out <dpdt_out>`
      - :ref:`compute_dpdt <kw_compute_dpdt>`
-     - time derivative of the polarizability and its time integration
+     - Total dipole-moment derivative and its time integral
      - Append
    * - :ref:`sdc.out <sdc_out>`
      - :ref:`compute_sdc <kw_compute_sdc>`
@@ -95,7 +119,7 @@ Output files
      - Append
    * - :ref:`ic.out <ic_out>`
      - :ref:`compute_ic <kw_compute_ic>`
-     - Iron conductivity (:term:`IC`) data
+     - Ionic conductivity (:term:`IC`) data
      - Append
    * - :ref:`cohesive.out <cohesive_out>`
      - :ref:`compute_cohesive <kw_compute_cohesive>`
@@ -107,11 +131,11 @@ Output files
      - Overwrite
    * - :ref:`omega2.out <omega2_out>`
      - :ref:`compute_phonon <kw_compute_phonon>`
-     - Phonon frequency squared :math:`\omega^2(\boldsymbol{k})` for the input :math:`\boldsymbol{k}`-points
+     - Phonon angular frequency squared :math:`\omega^2(\boldsymbol{k})` for the input :math:`\boldsymbol{k}`-points
      - Overwrite
    * - :ref:`viscosity.out <viscosity_out>`
      - :ref:`compute_viscosity <kw_compute_viscosity>`
-     - Viscosity and stress auto-correlation function
+     - Viscosity and stress autocorrelation function
      - Append
    * - :ref:`onsager.out <onsager_out>`
      - :ref:`compute_hnemdec <kw_compute_hnemdec>`
@@ -149,11 +173,27 @@ Output files
      - :ref:`compute_orientorder <kw_compute_orientorder>`
      - Steinhardt bond-orientational order parameters
      - Append
+   * - :ref:`shock-wave histogram files <shock_nemd_hist_out>`
+     - :ref:`dump_shock_nemd <kw_dump_shock_nemd>`
+     - ``temperature_hist.txt``, stress, density, and particle-velocity profiles
+     - Overwrite
+   * - ``spring_gm*_g*_s*.out`` (:ref:`details <kw_add_spring>`)
+     - :ref:`add_spring <kw_add_spring>`
+     - Spring force and energy data
+     - New file; append with ``continue``
+   * - ``spring_gm*_g*_s*.restart`` (:ref:`details <kw_add_spring>`)
+     - :ref:`add_spring <kw_add_spring>`
+     - Ghost-spring restart state
+     - Overwrite
+   * - ``deposited_N.xyz`` (:ref:`details <kw_deposit>`)
+     - :ref:`deposit <kw_deposit>`
+     - Structure after each deposition sub-run
+     - One file per sub-run
 
 .. toctree::
-   :maxdepth: 0
+   :maxdepth: 1
    :caption: Contents
-   
+
    cohesive_out
    compute_out
    ttm_electron_temperature_out
@@ -168,6 +208,7 @@ Output files
    mvac_out
    omega2_out
    restart_xyz
+   spin_restart
    dump_xyz
    observer_xyz
    observer_out
@@ -189,3 +230,66 @@ Output files
    lsqt_sigma_out
    angular_rdf_out
    orientorder_out
+
+.. _replica_output_files:
+
+Replica dynamics
+----------------
+
+Runs with :ref:`multi_replica <kw_multi_replica>` automatically write the diagnostics below.
+Trajectories require :ref:`replica trajectory output <replica_kw_dump_xyz>`.
+Fresh runs overwrite diagnostics and trajectories; resumed runs append.
+Temperature ladders, ladder reports, and restart files are overwritten.
+
+.. list-table::
+   :header-rows: 1
+   :widths: auto
+
+   * - File name
+     - Generating keyword
+     - Brief description
+     - Output mode
+   * - :ref:`remd_temps.in <replica_remd_temps>`
+     - :ref:`multi_replica remd <replica_remd>`
+     - Temperature ladder
+     - Overwrite
+   * - :ref:`remd_exchange.out <replica_remd_exchange>`
+     - :ref:`multi_replica remd <replica_remd>`
+     - Exchange attempts
+     - Append on resume
+   * - :ref:`remd_temperature_status.out <replica_remd_status>`
+     - :ref:`multi_replica remd <replica_remd>`
+     - Replica-to-temperature mapping
+     - Append on resume
+   * - :ref:`remd_thermo.out <replica_remd_thermo>`
+     - :ref:`multi_replica remd <replica_remd>`
+     - Target temperatures, energies, and volumes
+     - Append on resume
+   * - :ref:`remd_ladder.out <replica_remd_ladder>`
+     - :ref:`multi_replica remd <replica_remd>`
+     - Acceptance statistics
+     - Overwrite
+   * - :ref:`prd_events.out <replica_prd_events>`
+     - :ref:`multi_replica prd <replica_prd>`
+     - Transitions and physical clock
+     - Append on resume
+   * - :ref:`Replica trajectory files <replica_trajectory>`
+     - :ref:`dump_xyz <replica_kw_dump_xyz>`
+     - Atomic configurations
+     - Append on resume
+   * - :ref:`Replica restart files <replica_restart>`
+     - :ref:`multi_replica <kw_multi_replica>`
+     - State for continuing a run
+     - Overwrite
+
+.. toctree::
+   :maxdepth: 1
+
+   remd_temps
+   remd_exchange
+   remd_status
+   remd_thermo
+   remd_ladder
+   prd_events
+   replica_trajectory
+   replica_restart

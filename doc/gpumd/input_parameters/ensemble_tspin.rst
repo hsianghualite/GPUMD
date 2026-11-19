@@ -1,0 +1,155 @@
+.. _kw_ensemble_tspin:
+.. _kw_nvt_tspin:
+.. _kw_npt_tspin:
+.. index::
+   single: nvt_tspin (keyword in run.in)
+   single: npt_tspin (keyword in run.in)
+   single: TSPIN integrator
+
+:attr:`ensemble` (TSPIN)
+========================
+
+Use TSPIN to propagate the Cartesian spin coordinates of a Spin potential.
+Choose ``nvt_tspin`` for a fixed simulation cell, optionally with lattice
+dynamics, or ``npt_tspin`` when the simulation cell and pressure must also be
+controlled.
+
+Both methods use a spin Nosé-Hoover-chain thermostat.
+The lattice uses a Nosé-Hoover chain in ``nvt_tspin`` and :ref:`MTTK temperature and pressure control <kw_ensemble_mttk>` in ``npt_tspin``.
+
+Syntax
+------
+
+For fixed-cell NVT dynamics, use::
+
+    ensemble nvt_tspin <T_1> <T_2> <T_coup> [lattice on|off] [mass_factor <value> | mass_factor <element> <value> ...] [seed <value>]
+
+For pressure-controlled NPT dynamics, use::
+
+    ensemble npt_tspin temp <T_1> <T_2> <pressure_terms> [tperiod <tau_temp>] [pperiod <tau_press>] [mass_factor <value> | mass_factor <element> <value> ...] [seed <value>]
+
+The ``npt_tspin`` options through ``pperiod`` have the same syntax, meaning,
+and defaults as ``npt_mttk``. The pressure terms can be ``iso``, ``aniso``,
+``tri``, or a supported combination of ``x``, ``y``, ``z``, ``xy``, ``xz``,
+and ``yz``. The optional TSPIN pairs must come after all MTTK options.
+
+Parameters
+----------
+
+``T_1``, ``T_2``
+  Initial and final target temperatures in K. The target is ramped linearly
+  during each ``run`` and is shared by the lattice and spin thermostats.
+
+``T_coup``
+  Thermostat coupling period in time steps for ``nvt_tspin``. It controls both
+  lattice and spin thermostats with ``lattice on``, and only the spin
+  thermostat with ``lattice off``. It must be finite and at least ``1``.
+
+``lattice on|off``
+  Available only for ``nvt_tspin`` and defaults to ``on``. With ``on``, the
+  lattice positions and velocities are integrated and thermostatted by the
+  standard Nosé-Hoover chain. With ``off``, GPUMD leaves every atomic
+  position and lattice velocity unchanged while continuing to evaluate the
+  Spin potential and integrate the spin coordinates. Supplied lattice
+  velocities are preserved rather than cleared.
+
+``mass_factor <value>``
+  A single positive finite value applies to every element. The code default is
+  ``1.0``. A practical starting value for magnetic-dynamics runs is ``0.001``.
+  A smaller positive value produces a faster spin response and can require a
+  smaller timestep, so check trajectory and temperature stability for the
+  system being studied.
+
+``mass_factor <element> <value> ...``
+  Sets the coefficient by element name. Every element present in
+  ``model.xyz`` must be listed exactly once. Values must be finite and
+  non-negative, and at least one element must have a positive value. A value
+  of ``0`` is a TSPIN freeze marker: GPUMD excludes those spins from the spin
+  thermostat degrees of freedom, sets their spin velocities to zero, and does
+  not update their spin coordinates.
+
+``seed <value>``
+  Positive integer used to generate spin velocities when ``spin_vel:R:3`` is
+  absent. The default is ``12345``. The seed is ignored when initialized spin
+  velocities are supplied.
+
+Output
+------
+
+Write the propagated state and magnetic force with::
+
+    dump_xyz 100 spin.xyz spin mforce spin_velocity
+
+The extended-XYZ fields are ``spin:R:3``, ``mforce:R:3``, and
+``spin_vel:R:3``. Check that the spin temperature remains stable for the
+chosen ``mass_factor`` and timestep. With ``lattice on``, also check the
+lattice temperature. For ``npt_tspin``, check cell and pressure stability.
+
+Examples
+--------
+
+Run fixed-cell spin--lattice dynamics at 300 K::
+
+    ensemble nvt_tspin 300 300 100 mass_factor 0.001 seed 12345
+
+Keep atomic positions and lattice velocities fixed and propagate only the
+spin coordinates::
+
+    ensemble nvt_tspin 300 300 100 lattice off mass_factor 0.001 seed 12345
+
+For a Fe--Ge structure, propagate Fe spins with a coefficient of ``0.001``
+and keep Ge spins fixed::
+
+    ensemble nvt_tspin 300 300 100 mass_factor Fe 0.001 Ge 0 seed 12345
+
+Run isotropic pressure-controlled spin--lattice dynamics at 300 K and 0 GPa::
+
+    ensemble npt_tspin temp 300 300 iso 0 0 tperiod 100 pperiod 1000 mass_factor 0.001 seed 12345
+
+In these examples, ``mass_factor`` is a spin-mass coefficient. It does not
+replace or change the lattice atomic masses.
+
+Notes
+-----
+
+TSPIN requires exactly one NEP-spin potential, a positive time step, positive
+target temperatures, and finite integration parameters. The MTTK restriction
+``pperiod >= 200`` also applies to ``npt_tspin``.
+
+For ``npt_tspin``, the MTTK defaults are ``tperiod 100`` and ``pperiod 1000``.
+
+Spin degrees of freedom
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Only elements listed in the model's ``spin_type`` have spin degrees of freedom.
+Other elements contribute to the geometric environment, but their effective
+moments and spin velocities are zero and they are excluded from the spin
+thermostat. ``mass_factor <element> 0`` additionally freezes a magnetic
+coordinate and excludes it from the thermostat.
+
+State initialization and restart
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Each atom must have a ``spin:R:3`` vector. TSPIN propagates the full Cartesian
+vector and does not normalize its length.
+
+If ``spin_vel:R:3`` is absent, GPUMD generates spin velocities from ``seed``
+and rescales them separately for each atom type to ``T_1``. If
+``spin_vel:R:3`` is present, GPUMD uses every supplied value and ignores
+``seed``. For an element whose mass factor is zero, any supplied spin velocity
+is replaced by zero. Initialized spin velocities are reused by later ``run``
+commands.
+They are also written by ``dump_restart`` and reused when its ``restart.xyz``
+is loaded as ``model.xyz``. Thermostat and barostat internal variables are
+initialized anew; see :ref:`Spin restart <spin_restart>`.
+
+Pressure coupling in ``npt_tspin``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The MTTK barostat acts on the simulation cell, atomic positions, and lattice
+momenta. It neither rescales nor rotates the Cartesian spin vectors. The
+instantaneous pressure contains the lattice kinetic term and the full
+potential virial of :math:`U(\boldsymbol R,\boldsymbol S)`, but not the TSPIN
+kinetic energy. Spin affects the cell through the Spin-potential virial.
+Because pressure control requires cell and lattice dynamics, ``npt_tspin``
+does not accept ``lattice off``.

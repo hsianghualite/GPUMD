@@ -2,24 +2,32 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+/*----------------------------------------------------------------------------80
+Major contributors:
+  Hongfu Huang: Initial implementation.
+------------------------------------------------------------------------------*/
+
+#include "device_guard.cuh"
 #include "parameters.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
 #include "utilities/read_file.cuh"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 const std::string ELEMENTS[NUM_ELEMENTS] = {
   "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne", "Na", "Mg", "Al", "Si", "P",  "S",
@@ -48,6 +56,8 @@ Parameters::Parameters()
   print_line_2();
 }
 
+Parameters::~Parameters() { cudaSetDevice(0); }
+
 void Parameters::set_default_parameters()
 {
   is_prediction_set = false;
@@ -69,38 +79,39 @@ void Parameters::set_default_parameters()
   is_use_typewise_cutoff_zbl_set = false;
   is_energy_shift_set = false;
   is_lr_cos_restart_set = false;
+  is_seed_set = false;
 
-  prediction = 0;              // not prediction mode
-  basis_size_radial = 8;       // large enough in most cases
-  basis_size_angular = 8;      // large enough in most cases
-  n_max_radial = 4;            // a relatively small value to achieve high speed
-  n_max_angular = 4;           // a relatively small value to achieve high speed
-  L_max = 4;                   // the only supported value
-  num_neurons1 = 30;           // a relatively small value to achieve high speed
-  weight_decay = 0.0f;         // no weight decay by default (Adam). In general, 1e-6 ~ 1e-4 for AdamW
-  lr = 1e-3f;                 
-  start_lr = 1e-3f;   
-  stop_lr = 1e-7f;             
-  lambda_e = 1.0f;           // energy important
-  lambda_f = 2.0f;         // force is more important
-  lambda_v = 0.1f;             // virial is less important, virial is inaccuracy in most cases
-  lambda_shear = 1.0f;         // do not weight shear virial more by default
-  force_delta = 0.0f;          // no modification of force loss
-  batch_size = 2;           // mini-batch for adam optimizer
-  use_full_batch = 0;          // default is not to enable effective full-batch
-  epoch = 50;               
+  prediction = 0;         // not prediction mode
+  basis_size_radial = 8;  // large enough in most cases
+  basis_size_angular = 8; // large enough in most cases
+  n_max_radial = 4;       // a relatively small value to achieve high speed
+  n_max_angular = 4;      // a relatively small value to achieve high speed
+  L_max = 4;              // the only supported value
+  num_neurons1 = 30;      // a relatively small value to achieve high speed
+  weight_decay = 0.0f;    // no weight decay by default (Adam). In general, 1e-6 ~ 1e-4 for AdamW
+  lr = 1e-3f;
+  start_lr = 1e-3f;
+  stop_lr = 1e-7f;
+  lambda_e = 1.0f;     // energy important
+  lambda_f = 2.0f;     // force is more important
+  lambda_v = 0.1f;     // virial is less important, virial is inaccuracy in most cases
+  lambda_shear = 1.0f; // do not weight shear virial more by default
+  force_delta = 0.0f;  // no modification of force loss
+  batch_size = 2;      // mini-batch for adam optimizer
+  use_full_batch = 0;  // default is not to enable effective full-batch
+  epoch = 50;
   use_typewise_cutoff_zbl = false;
   typewise_cutoff_zbl_factor = -1.0f;
   energy_shift = 0;
   output_descriptor = false;
+  seed = 1234567;
 
   // default for lr cosine restart scheduler
   lr_restart_enable = 0;
   lr_warmup_epochs = 1;
-  lr_restart_initial_period_epochs = 10; 
+  lr_restart_initial_period_epochs = 10;
   lr_restart_period_factor = 2.0f;
   lr_restart_decay_factor = 0.8f;
-  
 
   type_weight_cpu.resize(NUM_ELEMENTS);
   rc_radial.resize(NUM_ELEMENTS);
@@ -178,15 +189,69 @@ void Parameters::calculate_parameters()
 
   number_of_variables = number_of_variables_ann + number_of_variables_descriptor;
 
-  int deviceCount;
-  CHECK(cudaGetDeviceCount(&deviceCount));
-  for (int device_id = 0; device_id < deviceCount; device_id++) {
-    CHECK(cudaSetDevice(device_id));
-    q_scaler_gpu[device_id].resize(dim);
-    s_max[device_id].resize(dim, -1000000.0f);
-    s_min[device_id].resize(dim, +1000000.0f);
-    q_scaler_gpu[device_id].copy_from_host(q_scaler_cpu.data());
-    energy_shift_gpu.resize(num_types, 0.0f);
+  int device_count;
+  CHECK(cudaGetDeviceCount(&device_count));
+  device_scalers.reserve(device_count);
+  for (int device_id = 0; device_id < device_count; ++device_id) {
+    DeviceGuard guard(device_id);
+    std::unique_ptr<GNEPDeviceScaler> state(new GNEPDeviceScaler(device_id));
+    state->q_scaler.resize(dim);
+    state->s_max.resize(dim, -1000000.0f);
+    state->s_min.resize(dim, +1000000.0f);
+    state->q_scaler.copy_from_host(q_scaler_cpu.data());
+    device_scalers.emplace_back(std::move(state));
+  }
+  DeviceGuard guard(0);
+  energy_shift_gpu.resize(num_types, 0.0f);
+}
+
+GPU_Vector<float>& Parameters::q_scaler_gpu(const int device_id)
+{
+  return device_scalers.at(device_id)->q_scaler;
+}
+
+GPU_Vector<float>& Parameters::s_max_gpu(const int device_id)
+{
+  return device_scalers.at(device_id)->s_max;
+}
+
+GPU_Vector<float>& Parameters::s_min_gpu(const int device_id)
+{
+  return device_scalers.at(device_id)->s_min;
+}
+
+int Parameters::num_devices() const { return static_cast<int>(device_scalers.size()); }
+
+void Parameters::reduce_and_broadcast_scaler()
+{
+#ifndef USE_FIXED_SCALER
+  std::vector<float> global_max(dim, -std::numeric_limits<float>::infinity());
+  std::vector<float> global_min(dim, +std::numeric_limits<float>::infinity());
+  std::vector<float> local_max(dim);
+  std::vector<float> local_min(dim);
+
+  for (int device_id = 0; device_id < num_devices(); ++device_id) {
+    DeviceGuard guard(device_id);
+    s_max_gpu(device_id).copy_to_host(local_max.data());
+    s_min_gpu(device_id).copy_to_host(local_min.data());
+    for (int d = 0; d < dim; ++d) {
+      global_max[d] = std::max(global_max[d], local_max[d]);
+      global_min[d] = std::min(global_min[d], local_min[d]);
+    }
+  }
+
+  for (int d = 0; d < dim; ++d) {
+    q_scaler_cpu[d] = 1.0f / (global_max[d] - global_min[d]);
+  }
+#endif
+
+  for (int device_id = 0; device_id < num_devices(); ++device_id) {
+    DeviceGuard guard(device_id);
+    q_scaler_gpu(device_id).copy_from_host(q_scaler_cpu.data());
+#ifndef USE_FIXED_SCALER
+    s_max_gpu(device_id).copy_from_host(global_max.data());
+    s_min_gpu(device_id).copy_from_host(global_min.data());
+#endif
   }
 }
 
@@ -330,6 +395,12 @@ void Parameters::report_inputs()
     printf("    (default) maximum number of epochs = %d.\n", epoch);
   }
 
+  if (is_seed_set) {
+    printf("    (input)   deterministic random seed = %d.\n", seed);
+  } else {
+    printf("    (default) parameter seed = %d; batch shuffle is non-deterministic.\n", seed);
+  }
+
   // report lr cosine restart settings
   if (lr_restart_enable) {
     printf("    (input)   lr_cos_restart enabled.\n");
@@ -345,9 +416,7 @@ void Parameters::report_inputs()
   printf("    number of angular descriptor components = %d.\n", dim_angular);
   printf("    total number of descriptor components = %d.\n", dim);
   printf("    NN architecture = %d-%d-1.\n", dim, num_neurons1);
-  printf(
-    "    number of NN parameters to be optimized = %d.\n",
-    number_of_variables_ann);
+  printf("    number of NN parameters to be optimized = %d.\n", number_of_variables_ann);
   printf(
     "    number of descriptor parameters to be optimized = %d.\n", number_of_variables_descriptor);
   printf("    total number of parameters to be optimized = %d.\n", number_of_variables);
@@ -406,6 +475,8 @@ void Parameters::parse_one_keyword(std::vector<std::string>& tokens)
     parse_output_descriptor(param, num_param);
   } else if (strcmp(param[0], "lr_cos_restart") == 0) {
     parse_lr_cos_restart(param, num_param);
+  } else if (strcmp(param[0], "seed") == 0) {
+    parse_seed(param, num_param);
   } else {
     PRINT_KEYWORD_ERROR(param[0]);
   }
@@ -537,7 +608,7 @@ void Parameters::parse_cutoff(const char** param, int num_param)
     if (!is_valid_real(param[1], &rc_radial_tmp)) {
       PRINT_INPUT_ERROR("radial cutoff should be a number.\n");
     }
-    for (int n = 0; n < num_types; ++ n) {
+    for (int n = 0; n < num_types; ++n) {
       rc_radial[n] = rc_radial_tmp;
     }
 
@@ -545,7 +616,7 @@ void Parameters::parse_cutoff(const char** param, int num_param)
     if (!is_valid_real(param[2], &rc_angular_tmp)) {
       PRINT_INPUT_ERROR("angular cutoff should be a number.\n");
     }
-    for (int n = 0; n < num_types; ++ n) {
+    for (int n = 0; n < num_types; ++n) {
       rc_angular[n] = rc_angular_tmp;
     }
 
@@ -560,7 +631,7 @@ void Parameters::parse_cutoff(const char** param, int num_param)
     }
   } else {
     has_multiple_cutoffs = true;
-    
+
     for (int n = 0; n < num_types; ++n) {
       double rc_radial_tmp = 0.0;
       if (!is_valid_real(param[1 + n * 2], &rc_radial_tmp)) {
@@ -588,7 +659,7 @@ void Parameters::parse_cutoff(const char** param, int num_param)
 
   rc_radial_max = 0.0f;
   rc_angular_max = 0.0f;
-  for (int n = 0; n < num_types; ++ n) {
+  for (int n = 0; n < num_types; ++n) {
     if (rc_radial[n] > rc_radial_max) {
       rc_radial_max = rc_radial[n];
     }
@@ -856,6 +927,20 @@ void Parameters::parse_epoch(const char** param, int num_param)
     PRINT_INPUT_ERROR("maximum number of epochs should >= 0.");
   } else if (epoch > 10000) {
     PRINT_INPUT_ERROR("maximum number of epochs should <= 10000.");
+  }
+}
+
+void Parameters::parse_seed(const char** param, int num_param)
+{
+  is_seed_set = true;
+  if (num_param != 2) {
+    PRINT_INPUT_ERROR("seed should have 1 parameter.\n");
+  }
+  if (!is_valid_int(param[1], &seed)) {
+    PRINT_INPUT_ERROR("seed should be an integer.\n");
+  }
+  if (seed < 0) {
+    PRINT_INPUT_ERROR("seed should be non-negative.");
   }
 }
 

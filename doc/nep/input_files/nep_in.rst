@@ -5,24 +5,47 @@
 ``nep.in``
 ==========
 
-This file specifies hyperparameters used for training neuroevolution potential (:term:`NEP`) models, the functional form of which is outline :ref:`here <nep_formalism>`.
-The :term:`NEP` approach was proposed in [Fan2021]_ (NEP1) and later improved in [Fan2022a]_ (NEP2), [Fan2022b]_ (NEP3), and [Song2024]_ (NEP4).
-Currently, we support NEP3 and NEP4, which can be chosen by the :ref:`version keyword <kw_version>`.
+This file selects the model and controls NEP training or prediction.
+For the model equations, see :ref:`NEP formalism <nep_formalism>`.
 
 File format
 -----------
 
-In this input file, blank lines and lines starting with :attr:`#` are ignored.
-One can thus write comments after :attr:`#`.
+Write one keyword per line::
 
-All other lines need to be of the following form::
-  
   keyword parameter_1 parameter_2 ...
- 
-Keywords can appear in any order with the exception of the :ref:`type_weight keyword <kw_type_weight>`, which cannot appear before the :ref:`type keyword <kw_type>`. 
 
-The :ref:`type keyword <kw_type>` does not have default parameters and *must* be set.
-All other keywords have default values.
+Blank lines are ignored, and ``#`` starts a comment that extends to the end of the line.
+Put the required :ref:`type <kw_type>` keyword first, followed by the settings to change from their defaults.
+In particular, ``type`` must precede :ref:`cutoff <kw_cutoff>`, :ref:`type_weight <kw_type_weight>`, and :ref:`spin_cutoff <kw_spin_cutoff>`.
+All other keywords have defaults for ordinary NEP training.
+
+Use :ref:`model <kw_model>` to select another model family, such as ``model qnep2``.
+The default model is ordinary ``nep``.
+Only NEP4 is supported, so :ref:`version <kw_version>` can be omitted or set to ``4``.
+
+Example
+-------
+
+The following input lists common settings for an ordinary Te-Pb NEP model explicitly.
+Apart from the required species list, the values shown are the defaults::
+
+  type        2 Te Pb
+  version     4
+  cutoff      8 4
+  n_max       6 6
+  basis_size  6 6
+  l_max       4 1
+  neuron      30
+  lambda_e    1.0
+  lambda_f    1.0
+  lambda_v    0.1
+  batch       1000
+  population  50
+  generation  100000
+
+Choose the cutoffs and other model settings for the system and training data.
+For Spin training, see the :ref:`spin_version example <spin_training_example>` and :ref:`Spin potential documentation <nep_spin>`.
 
 Keywords
 --------
@@ -35,32 +58,48 @@ Keywords
    * - Keyword
      - Brief description
    * - :ref:`version <kw_version>`
-     - select the NEP version
+     - select the NEP version (currently only NEP4)
    * - :ref:`type <kw_type>`
      - number of atom types and list of chemical species
    * - :ref:`type_weight <kw_type_weight>`
      - force weights for different atom types
-   * - :ref:`model_type <kw_model_type>`
-     - select to train potential, dipole, or polarizability
-   * - :ref:`charge_mode <kw_charge_mode>`
-     - select the charge mode for a potential model
+   * - :ref:`model <kw_model>`
+     - select the model for training or prediction
+   * - :ref:`flip_charge <kw_flip_charge>`
+     - reverse charge-output weights when restarting charge-model training
    * - :ref:`prediction <kw_prediction>`
      - select between training and prediction (inference)
    * - :ref:`zbl <kw_zbl>`
      - outer cutoff for the universal :term:`ZBL` potential [Ziegler1985]_
+   * - :ref:`spin_version <kw_spin_version>`
+     - select the spin descriptor version for ``model nep_spin``
+   * - :ref:`spin_cutoff <kw_spin_cutoff>`
+     - one spin cutoff or one cutoff per element, bounded by the NEP radial cutoff
+   * - :ref:`spin_l_max <kw_spin_l_max>`
+     - maximum spatial tensor rank used by the spin descriptor
+   * - :ref:`spin_compress <kw_spin_compress>`
+     - number of shared compressed radial channels
+   * - :ref:`spin_order <kw_spin_order>`
+     - maximum polynomial degree of primitive spin inputs
+   * - :ref:`spin_soc <kw_spin_soc>`
+     - enable joint spin--space rotation-invariant magnetic channels
+   * - :ref:`spin_type <kw_spin_type>`
+     - atom types with independent spin degrees of freedom
+   * - :ref:`use_typewise_cutoff_zbl <kw_use_typewise_cutoff_zbl>`
+     - enable typewise cutoff radii for the ZBL part of the model
    * - :ref:`cutoff <kw_cutoff>`
      - radial (:math:`r_\mathrm{c}^\mathrm{R}`) and angular (:math:`r_\mathrm{c}^\mathrm{A}`) cutoffs
    * - :ref:`n_max <kw_n_max>`
-     - size of radial (:math:`n_\mathrm{max}^\mathrm{R}`) and angular (:math:`n_\mathrm{max}^\mathrm{A}`) basis
+     - radial-function index limits for radial and angular descriptors
    * - :ref:`basis_size <kw_basis_size>`
-     - number of radial (:math:`N_\mathrm{bas}^\mathrm{R}`) and angular (:math:`N_\mathrm{bas}^\mathrm{A}`) basis functions
+     - radial (:math:`N_\mathrm{bas}^\mathrm{R}`) and angular (:math:`N_\mathrm{bas}^\mathrm{A}`) basis sizes
    * - :ref:`l_max <kw_l_max>`
      - expansion order for angular terms
    * - :ref:`neuron <kw_neuron>`
      - number of neurons in the hidden layer (:math:`N_\mathrm{neu}`)
    * - :ref:`lambda_1 <kw_lambda_1>`
      - weight of :math:`\mathcal{L}_1`-norm regularization term
-   * - :ref:`lambda_2 <kw_lambda_1>`
+   * - :ref:`lambda_2 <kw_lambda_2>`
      - weight of :math:`\mathcal{L}_2`-norm regularization term
    * - :ref:`lambda_e <kw_lambda_e>`
      - weight of energy loss term
@@ -68,8 +107,26 @@ Keywords
      - weight of force loss term
    * - :ref:`lambda_v <kw_lambda_v>`
      - weight of virial loss term
+   * - :ref:`lambda_m <kw_lambda_m>`
+     - weight of Cartesian magnetic-force loss term
+   * - :ref:`lambda_m_parallel <kw_lambda_m_parallel>`
+     - weight of parallel magnetic-force RMSE (requires ``lambda_m_perp``)
+   * - :ref:`lambda_m_perp <kw_lambda_m_perp>`
+     - weight of perpendicular magnetic-force RMSE (requires ``lambda_m_parallel``)
+   * - :ref:`lambda_tau <kw_lambda_tau>`
+     - weight of spin-torque loss term
+   * - :ref:`lambda_spin_response <kw_lambda_spin_response>`
+     - weight of grouped magnetic-response loss term
+   * - :ref:`lambda_q <kw_lambda_q>`
+     - weight of total-charge loss term for qNEP models
+   * - :ref:`lambda_z <kw_lambda_z>`
+     - weight of Born-effective-charge loss term for qNEP models
+   * - :ref:`lambda_d <kw_lambda_d>`
+     - weight of energy-difference loss term, with the combinations in ``ediff.in``
    * - :ref:`atomic_v <kw_atomic_v>`
-     - fit atomic or global virial
+     - fit atomic or global dipole/polarizability targets
+   * - :ref:`lambda_shear <kw_lambda_shear>`
+     - extra weight of shear-virial loss terms
    * - :ref:`force_delta <kw_force_delta>`
      - bias term that can be used to make smaller forces more accurate
    * - :ref:`batch <kw_batch>`
@@ -78,26 +135,23 @@ Keywords
      - population size used in the :term:`SNES` algorithm [Schaul2011]_
    * - :ref:`generation <kw_generation>`
      - number of generations used by the :term:`SNES` algorithm [Schaul2011]_
+   * - :ref:`seed <kw_seed>`
+     - random seed for the :term:`SNES` algorithm
+   * - :ref:`save_potential <kw_save_potential>`
+     - periodically save model checkpoints and, optionally, restart checkpoints
+   * - :ref:`output_interval <kw_output_interval>`
+     - interval between regular training-status and model/test-set outputs
+   * - :ref:`output_descriptor <kw_output_descriptor>`
+     - output normalized descriptors in prediction mode
+   * - :ref:`fine_tune <kw_fine_tune>`
+     - fine tune a model starting from a foundation model
+   * - :ref:`import_q_scaler <kw_import_q_scaler>`
+     - import descriptor normalization factors from an existing ``nep.txt``
 
 Consistency with model files already present
 --------------------------------------------
 
-A training run writes :ref:`nep.txt <nep_txt>` every :ref:`output_interval <kw_output_interval>` generations, and :ref:`nep.restart <nep_restart>` every 100 generations, which is a fixed interval and not affected by :ref:`output_interval <kw_output_interval>`.
-A later run started in the same directory therefore finds these files, and :program:`nep` checks that the model they describe is the one that :attr:`nep.in` asks for.
-Both the values given explicitly in :attr:`nep.in` and the defaults filled in for the keywords that are omitted take part in this comparison.
-
-The comparison covers everything recorded in the header of :ref:`nep.txt <nep_txt>`: the model type (:ref:`version <kw_version>`, :ref:`model_type <kw_model_type>` and :ref:`charge_mode <kw_charge_mode>`), the number of species and the species themselves in the order they are listed, the :ref:`zbl <kw_zbl>` setting and its cutoffs, the :ref:`cutoff <kw_cutoff>` values, :ref:`n_max <kw_n_max>`, :ref:`basis_size <kw_basis_size>`, :ref:`l_max <kw_l_max>` and :ref:`neuron <kw_neuron>`.
-The number of rows in :ref:`nep.restart <nep_restart>` is compared against the number of parameters that :attr:`nep.in` implies.
-
-How a mismatch is reported depends on whether the files are inputs to the run:
-
-* If :ref:`nep.restart <nep_restart>` is present the run is a resume, and any mismatch is an error.
-  Continuing would otherwise mean reading the restart state of a differently shaped model, which silently corrupts the training.
-  Remove :ref:`nep.restart <nep_restart>` to start a new training run instead.
-* The same applies when :ref:`prediction <kw_prediction>` is set, since :ref:`nep.txt <nep_txt>` is then the model to predict with.
-* If only :ref:`nep.txt <nep_txt>` is present it is assumed to be a stale output that this run is about to overwrite.
-  In this case, a mismatch is reported as a warning and the run proceeds.
-  Editing :attr:`nep.in` and retraining in the same directory thus keeps working.
+A training run writes both :ref:`nep.txt <nep_txt>` and :ref:`nep.restart <nep_restart>` every :ref:`output_interval <kw_output_interval>` generations.
 
 Each mismatch is reported on its own line, naming the keyword, the value used by the current run, whether that value was given in :attr:`nep.in` or is a default, and the value found in the file, for example::
 
@@ -105,25 +159,4 @@ Each mismatch is reported on its own line, naming the keyword, the value used by
       basis_size_radial: nep.in gives 6 (default), nep.txt gives 8.
       basis_size_angular: nep.in gives 6 (default), nep.txt gives 8.
 
-The same comparison is applied to the foundation model named by the :ref:`fine_tune keyword <kw_fine_tune>` and to the :ref:`nep.txt <nep_txt>` read by the :ref:`import_q_scaler keyword <kw_import_q_scaler>`, where a mismatch is always an error.
-
-Example
--------
-Here is an example :attr:`nep.in` file using all the default parameters::
-  
-  type       	2 Te Pb   # this is a mandatory keyword
-  version       4         # the only option
-  cutoff     	8 4       # please choose these reasonably
-  n_max      	6 6       # default
-  basis_size	6 6       # default
-  l_max      	4 1       # default
-  neuron     	30        # default
-  lambda_e      1.0       # default
-  lambda_f      1.0       # default
-  lambda_v      0.1       # default
-  batch         1000      # default
-  population	50        # default
-  generation	100000    # default
-
-The `NEP tutorial <https://github.com/brucefan1983/GPUMD/tree/master/examples/11_NEP_potential_PbTe/tutorial.ipynb>`_ illustrates the construction of a :term:`NEP` model.
-More examples can be found in `this repository <https://gitlab.com/brucefan1983/nep-data>`_.
+The same comparison is applied to the :ref:`nep.txt <nep_txt>` read by the :ref:`import_q_scaler keyword <kw_import_q_scaler>`, where a mismatch is always an error.

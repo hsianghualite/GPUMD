@@ -2,21 +2,24 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
 The FIRE (fast inertial relaxation engine) minimizer
 Reference: PhysRevLett 97, 170201 (2006)
            Computational Materials Science 175 (2020) 109584
+
+Major contributors:
+  Yongchao Wu: Initial implementation.
 ------------------------------------------------------------------------------*/
 
 #include "minimizer_fire_box_change.cuh"
@@ -77,70 +80,70 @@ static __global__ void gpu_sum_virial(
 {
   int tid = threadIdx.x;
   int bid = blockIdx.x;
-  int number_of_patches = (N - 1) / 1024 + 1;
+  int number_of_batches = (N - 1) / 1024 + 1;
   __shared__ double s_s[1024];
   double s = 0.0;
 
   switch (bid) {
     case 0:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_sxx[n];
       }
       break;
     case 1:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_sxy[n];
       }
       break;
     case 2:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_sxz[n];
       }
       break;
     case 3:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_syx[n];
       }
       break;
     case 4:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_syy[n];
       }
       break;
     case 5:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_syz[n];
       }
       break;
     case 6:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_szx[n];
       }
       break;
     case 7:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_szy[n];
       }
       break;
     case 8:
-      for (int p = 0; p < number_of_patches; ++p) {
-        int n = tid + p * 1024;
+      for (int batch = 0; batch < number_of_batches; ++batch) {
+        int n = tid + batch * 1024;
         if (n < N)
           s += g_szz[n];
       }
@@ -187,13 +190,13 @@ void pairwise_product(GPU_Vector<double>& a, GPU_Vector<double>& b, GPU_Vector<d
 
 __global__ void gpu_sum(const int size, double* a, double* result)
 {
-  int number_of_patches = (size - 1) / 1024 + 1;
+  int number_of_batches = (size - 1) / 1024 + 1;
   int tid = threadIdx.x;
-  int n, patch;
+  int n, batch;
   __shared__ double data[1024];
   data[tid] = 0.0;
-  for (patch = 0; patch < number_of_patches; ++patch) {
-    n = tid + patch * 1024;
+  for (batch = 0; batch < number_of_batches; ++batch) {
+    n = tid + batch * 1024;
     if (n < size)
       data[tid] += a[n];
   }
@@ -261,7 +264,13 @@ void Minimizer_FIRE_Box_Change::compute(
   for (int step = 0; step < number_of_steps_; ++step) {
 
     force.compute(
-      box, position_per_atom, atom.type, group, atom.potential_per_atom, atom.force_per_atom, atom.virial_per_atom);
+      box,
+      position_per_atom,
+      atom.type,
+      group,
+      atom.potential_per_atom,
+      atom.force_per_atom,
+      atom.virial_per_atom);
 
     gpu_sum_virial<<<9, 1024>>>(
       number_of_atoms_,
@@ -309,7 +318,10 @@ void Minimizer_FIRE_Box_Change::compute(
     }
 
     gpuMemcpy(
-      force_temp.data(), atom.force_per_atom.data(), size * sizeof(double), gpuMemcpyDeviceToDevice);
+      force_temp.data(),
+      atom.force_per_atom.data(),
+      size * sizeof(double),
+      gpuMemcpyDeviceToDevice);
     gpuMemcpy(force_temp.data() + size, virial_cpu, 9 * sizeof(double), gpuMemcpyHostToDevice);
 
     calculate_force_square_max(atom.force_per_atom);

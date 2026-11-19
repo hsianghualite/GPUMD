@@ -2,22 +2,24 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 #pragma once
+#include "gradients.cuh"
 #include "potential.cuh"
 #include "utilities/common.cuh"
 #include "utilities/gpu_vector.cuh"
-#include "gradients.cuh"
+#include <memory>
+#include <vector>
 class Parameters;
 class Dataset;
 
@@ -32,13 +34,21 @@ struct GNEP_Data {
   GPU_Vector<float> x12_angular;
   GPU_Vector<float> y12_angular;
   GPU_Vector<float> z12_angular;
-  GPU_Vector<float> descriptors; // descriptors
-  GPU_Vector<float> Fp;          // gradient of descriptors
-  GPU_Vector<float> Fp2;         // second gradient of descriptors
-  GPU_Vector<float> sum_fxyz;  // Snlm
-  GPU_Vector<float> sum_s2xyz; // Snlm_xyz
+  GPU_Vector<float> descriptors;  // descriptors
+  GPU_Vector<float> Fp;           // gradient of descriptors
+  GPU_Vector<float> Fp2;          // second gradient of descriptors
+  GPU_Vector<float> sum_fxyz;     // Snlm
+  GPU_Vector<float> sum_s2xyz;    // Snlm_xyz
   GPU_Vector<float> sum_s2xyz123; // Snlm_xyz * xyz
-  GPU_Vector<float> parameters; // parameters to be optimized
+  GPU_Vector<float> parameters;   // parameters to be optimized
+};
+
+struct GNEPDeviceCapacity {
+  int max_atoms = 0;
+  int max_training_atoms = 0;
+  int max_configurations = 0;
+  int max_radial_pairs = 0;
+  int max_angular_pairs = 0;
 };
 
 class GNEP : public Potential
@@ -63,10 +73,10 @@ public:
   };
 
   struct ANN {
-    int dim = 0;                    // dimension of the descriptor
-    int num_neurons1 = 0;           // number of neurons in the hidden layer
-    int num_ann = 0;                // number of ANN
-    int num_para = 0;               // number of parameters
+    int dim = 0;                   // dimension of the descriptor
+    int num_neurons1 = 0;          // number of neurons in the hidden layer
+    int num_ann = 0;               // number of ANN
+    int num_para = 0;              // number of parameters
     const float* w0[NUM_ELEMENTS]; // weight from the input layer to the hidden layer
     const float* b0[NUM_ELEMENTS]; // bias for the hidden layer
     const float* w1[NUM_ELEMENTS]; // weight from the hidden layer to the output layer
@@ -83,12 +93,16 @@ public:
     int atomic_numbers[NUM_ELEMENTS];
   };
 
-  GNEP(
-    Parameters& para,
-    int N,
-    int N_times_max_NN_radial,
-    int N_times_max_NN_angular,
-    int deviceCount);
+  struct DeviceContext {
+    explicit DeviceContext(int id) : device_id(id) {}
+    ~DeviceContext();
+    int device_id;
+    ANN ann;
+    GNEP_Data data;
+    Gradients gradients;
+  };
+
+  GNEP(Parameters& para, const std::vector<GNEPDeviceCapacity>& capacities);
   void find_force(
     Parameters& para,
     const float* parameters,
@@ -96,16 +110,20 @@ public:
     std::vector<Dataset>& dataset,
     bool calculate_q_scaler,
     bool calculate_neighbor,
-    int deviceCount);
+    int device_begin,
+    int device_count,
+    int global_num_configurations,
+    int global_num_atoms,
+    int global_virial_components);
 
-  Gradients gradients;
-  virtual Gradients& getGradients() override {return gradients;}
+  virtual Gradients& getGradients(int device_id) override
+  {
+    return contexts.at(device_id)->gradients;
+  }
 
 private:
   ParaMB paramb;
-  ANN annmb[16];
-  GNEP_Data gnep_data[16];
+  std::vector<std::unique_ptr<DeviceContext>> contexts;
   ZBL zbl;
   void update_potential(Parameters& para, const float* parameters, ANN& ann);
-  void initialize_gradients(Parameters& para, const int N);
 };

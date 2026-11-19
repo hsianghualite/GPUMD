@@ -2,27 +2,33 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
 neighbor list.
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
+  Hekai Bu: Separate intralayer and interlayer neighbors.
+  Yixin Deng: Fixed integer overflow in neighbor-list indexing and allocation.
 ------------------------------------------------------------------------------*/
 
 #include "neighbor.cuh"
 #include "utilities/error.cuh"
 #include "utilities/gpu_macro.cuh"
+#include <algorithm>
+#include <cstring>
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
-#include <cstring>
 
 static __device__ void find_cell_id(
   const Box& box,
@@ -114,14 +120,17 @@ static __global__ void gpu_find_neighbor_ON1(
     int cell_id_z;
     find_cell_id(box, x1, y1, z1, rc_inv, nx, ny, nz, cell_id_x, cell_id_y, cell_id_z, cell_id);
 
-    const int z_lim = box.pbc_z ? 2 : 0;
-    const int y_lim = box.pbc_y ? 2 : 0;
-    const int x_lim = box.pbc_x ? 2 : 0;
+    int z_begin, z_end;
+    int y_begin, y_end;
+    int x_begin, x_end;
+    get_neighbor_cell_offset_range(box.pbc_z, nz, z_begin, z_end);
+    get_neighbor_cell_offset_range(box.pbc_y, ny, y_begin, y_end);
+    get_neighbor_cell_offset_range(box.pbc_x, nx, x_begin, x_end);
 
     // get radial descriptors
-    for (int k = -z_lim; k <= z_lim; ++k) {
-      for (int j = -y_lim; j <= y_lim; ++j) {
-        for (int i = -x_lim; i <= x_lim; ++i) {
+    for (int k = z_begin; k < z_end; ++k) {
+      for (int j = y_begin; j < y_end; ++j) {
+        for (int i = x_begin; i < x_end; ++i) {
           int neighbor_cell = cell_id + k * nx * ny + j * nx + i;
           if (cell_id_x + i < 0)
             neighbor_cell += nx;
@@ -344,7 +353,7 @@ void find_neighbor(
   GPU_CHECK_KERNEL
 
   const int MN = NL.size() / NN.size();
-  gpu_sort_neighbor_list<<<N, MN, MN * sizeof(int)>>>(N, NN.data(), NL.data());
+  gpu_sort_neighbor_list<<<N, std::min(1024, MN), MN * sizeof(int)>>>(N, NN.data(), NL.data());
   GPU_CHECK_KERNEL
 }
 
@@ -386,14 +395,17 @@ static __global__ void gpu_find_neighbor_ON1_ilp(
     int cell_id_z;
     find_cell_id(box, x1, y1, z1, rc_inv, nx, ny, nz, cell_id_x, cell_id_y, cell_id_z, cell_id);
 
-    const int z_lim = box.pbc_z ? 2 : 0;
-    const int y_lim = box.pbc_y ? 2 : 0;
-    const int x_lim = box.pbc_x ? 2 : 0;
+    int z_begin, z_end;
+    int y_begin, y_end;
+    int x_begin, x_end;
+    get_neighbor_cell_offset_range(box.pbc_z, nz, z_begin, z_end);
+    get_neighbor_cell_offset_range(box.pbc_y, ny, y_begin, y_end);
+    get_neighbor_cell_offset_range(box.pbc_x, nx, x_begin, x_end);
 
     // get radial descriptors
-    for (int k = -z_lim; k <= z_lim; ++k) {
-      for (int j = -y_lim; j <= y_lim; ++j) {
-        for (int i = -x_lim; i <= x_lim; ++i) {
+    for (int k = z_begin; k < z_end; ++k) {
+      for (int j = y_begin; j < y_end; ++j) {
+        for (int i = x_begin; i < x_end; ++i) {
           int neighbor_cell = cell_id + k * nx * ny + j * nx + i;
           if (cell_id_x + i < 0)
             neighbor_cell += nx;
@@ -428,7 +440,6 @@ static __global__ void gpu_find_neighbor_ON1_ilp(
               } else if (!different_layer && d2 < big_ilp_cutoff_square) {
                 big_ilp_NL[ilp_count++ * N + n1] = n2;
               }
-
             }
           }
         }
@@ -497,11 +508,12 @@ void find_neighbor_ilp(
   GPU_CHECK_KERNEL
 
   const int MN = NL.size() / NN.size();
-  gpu_sort_neighbor_list_ilp<<<N, min(1024, MN), MN * sizeof(int)>>>(N, NN.data(), NL.data());
+  gpu_sort_neighbor_list<<<N, std::min(1024, MN), MN * sizeof(int)>>>(N, NN.data(), NL.data());
   GPU_CHECK_KERNEL
 
   const int big_ilp_MN = big_ilp_NL.size() / big_ilp_NN.size();
-  gpu_sort_neighbor_list<<<N, big_ilp_MN, big_ilp_MN * sizeof(int)>>>(N, big_ilp_NN.data(), big_ilp_NL.data());
+  gpu_sort_neighbor_list<<<N, std::min(1024, big_ilp_MN), big_ilp_MN * sizeof(int)>>>(
+    N, big_ilp_NN.data(), big_ilp_NL.data());
   GPU_CHECK_KERNEL
 }
 
@@ -538,14 +550,17 @@ static __global__ void gpu_find_neighbor_ON1_SW(
     int cell_id_z;
     find_cell_id(box, x1, y1, z1, rc_inv, nx, ny, nz, cell_id_x, cell_id_y, cell_id_z, cell_id);
 
-    const int z_lim = box.pbc_z ? 2 : 0;
-    const int y_lim = box.pbc_y ? 2 : 0;
-    const int x_lim = box.pbc_x ? 2 : 0;
+    int z_begin, z_end;
+    int y_begin, y_end;
+    int x_begin, x_end;
+    get_neighbor_cell_offset_range(box.pbc_z, nz, z_begin, z_end);
+    get_neighbor_cell_offset_range(box.pbc_y, ny, y_begin, y_end);
+    get_neighbor_cell_offset_range(box.pbc_x, nx, x_begin, x_end);
 
     // get radial descriptors
-    for (int k = -z_lim; k <= z_lim; ++k) {
-      for (int j = -y_lim; j <= y_lim; ++j) {
-        for (int i = -x_lim; i <= x_lim; ++i) {
+    for (int k = z_begin; k < z_end; ++k) {
+      for (int j = y_begin; j < y_end; ++j) {
+        for (int i = x_begin; i < x_end; ++i) {
           int neighbor_cell = cell_id + k * nx * ny + j * nx + i;
           if (cell_id_x + i < 0)
             neighbor_cell += nx;
@@ -573,7 +588,7 @@ static __global__ void gpu_find_neighbor_ON1_SW(
               apply_mic(box, x12, y12, z12);
               const double d2 = x12 * x12 + y12 * y12 + z12 * z12;
 
-              if (d2 < cutoff_square && group_label[n1] ==  group_label[n2]) {
+              if (d2 < cutoff_square && group_label[n1] == group_label[n2]) {
                 NL[static_cast<size_t>(N) * count++ + n1] = n2;
               }
             }
@@ -637,11 +652,12 @@ void find_neighbor_SW(
   GPU_CHECK_KERNEL
 
   const int MN = NL.size() / NN.size();
-  gpu_sort_neighbor_list<<<N, MN, MN * sizeof(int)>>>(N, NN.data(), NL.data());
+  gpu_sort_neighbor_list<<<N, std::min(1024, MN), MN * sizeof(int)>>>(N, NN.data(), NL.data());
   GPU_CHECK_KERNEL
 }
 
-namespace {
+namespace
+{
 
 __global__ void gpu_check_atom_distance(
   const Box box,
@@ -685,8 +701,8 @@ __global__ void gpu_check_atom_distance(
 
 __device__ int static_s2[1];
 
-__global__ void
-gpu_update_xyz0(int N, const double* x, const double* y, const double* z, double* x0, double* y0, double* z0)
+__global__ void gpu_update_xyz0(
+  int N, const double* x, const double* y, const double* z, double* x0, double* y0, double* z0)
 {
   int n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n < N) {
@@ -736,7 +752,7 @@ __global__ void gpu_find_local_neighbor_from_global(
   g_NN_local[n1] = count_local;
 }
 
-}
+} // namespace
 
 int Neighbor::check_atom_distance(Box& box, const double* x, const double* y, const double* z)
 {
@@ -755,8 +771,8 @@ int Neighbor::check_atom_distance(Box& box, const double* x, const double* y, co
 
 void Neighbor::find_neighbor_global(
   const double rc,
-  Box& box, 
-  const GPU_Vector<int>& type, 
+  Box& box,
+  const GPU_Vector<int>& type,
   const GPU_Vector<double>& position_per_atom)
 {
   const int N = type.size();
@@ -778,8 +794,8 @@ void Neighbor::find_neighbor_global(
       0,
       N,
       rc + skin,
-      box, 
-      type, 
+      box,
+      type,
       position_per_atom,
       cell_count,
       cell_count_sum,
@@ -787,21 +803,14 @@ void Neighbor::find_neighbor_global(
       NN,
       NL);
 
-    gpu_update_xyz0<<<(N - 1) / 128 + 1, 128>>>(
-      N, 
-      x, 
-      y, 
-      z, 
-      x0.data(), 
-      y0.data(), 
-      z0.data());
+    gpu_update_xyz0<<<(N - 1) / 128 + 1, 128>>>(N, x, y, z, x0.data(), y0.data(), z0.data());
     GPU_CHECK_KERNEL
   }
 }
 
 void Neighbor::find_local_neighbor_from_global(
   const double rc,
-  Box& box, 
+  Box& box,
   const GPU_Vector<double>& position_per_atom,
   GPU_Vector<int>& NN_local,
   GPU_Vector<int>& NL_local)
@@ -830,4 +839,72 @@ void Neighbor::initialize(const double rc, const int num_atoms, const int num_ne
   cell_count.resize(num_atoms);
   cell_count_sum.resize(num_atoms);
   cell_contents.resize(num_atoms);
+}
+
+double Neighbor::get_skin() const { return skin; }
+
+int Neighbor::get_capacity() const
+{
+  if (NN.size() == 0) {
+    return 0;
+  }
+  return static_cast<int>(NL.size() / NN.size());
+}
+
+NeighborManager::NeighborManager()
+{
+  requirement.rc = 0.0;
+  requirement.skin = 0.0;
+  requirement.num_atoms = 0;
+  requirement.capacity = 0;
+  initialized = false;
+}
+
+void NeighborManager::initialize(const double rc, const int num_atoms, const int num_neighbors)
+{
+  neighbor.initialize(rc, num_atoms, num_neighbors);
+  requirement.rc = rc;
+  requirement.skin = neighbor.get_skin();
+  requirement.num_atoms = num_atoms;
+  requirement.capacity = neighbor.get_capacity();
+  initialized = true;
+}
+
+void NeighborManager::update(
+  Box& box, const GPU_Vector<int>& type, const GPU_Vector<double>& position_per_atom)
+{
+  neighbor.find_neighbor_global(requirement.rc, box, type, position_per_atom);
+}
+
+const GPU_Vector<int>& NeighborManager::get_candidate_NN() const { return neighbor.NN; }
+
+const GPU_Vector<int>& NeighborManager::get_candidate_NL() const { return neighbor.NL; }
+
+void NeighborManager::set_candidate_capacity(const int capacity)
+{
+  neighbor.NL.resize(static_cast<size_t>(requirement.num_atoms) * capacity);
+  requirement.capacity = capacity;
+}
+
+void NeighborManager::find_local_neighbor(
+  const double rc,
+  Box& box,
+  const GPU_Vector<double>& position_per_atom,
+  GPU_Vector<int>& NN_local,
+  GPU_Vector<int>& NL_local)
+{
+  check_cutoff(rc);
+  neighbor.find_local_neighbor_from_global(rc, box, position_per_atom, NN_local, NL_local);
+}
+
+double NeighborManager::get_supported_cutoff() const { return requirement.rc; }
+
+void NeighborManager::check_cutoff(const double requested_cutoff) const
+{
+  if (!initialized) {
+    PRINT_INPUT_ERROR("Neighbor manager has not been initialized.");
+  }
+  if (requested_cutoff > requirement.rc) {
+    PRINT_INPUT_ERROR("Requested neighbor cutoff exceeds the supported candidate cutoff.");
+  }
 }

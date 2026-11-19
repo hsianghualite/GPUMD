@@ -2,19 +2,22 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*-----------------------------------------------------------------------------------------------100
 Calculate the time derivative of the polarization of the system and output to dpdt.out
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
 --------------------------------------------------------------------------------------------------*/
 
 #include "compute_dpdt.cuh"
@@ -22,10 +25,10 @@ Calculate the time derivative of the polarization of the system and output to dp
 #include "utilities/common.cuh"
 #include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
-#include <cstring>
 #include <vector>
 
-namespace{
+namespace
+{
 
 void __global__ gpu_compute_dpdt(
   const int num_atoms,
@@ -80,9 +83,9 @@ void __global__ gpu_sum_dpdt(const int N, const float* g_dpdt_per_atom, float* g
   }
 }
 
-}
+} // namespace
 
-void Compute_dpdt::preprocess(
+void Compute_dpdt::pre_run(
   const int number_of_steps,
   const double time_step,
   Integrate& integrate,
@@ -98,9 +101,15 @@ void Compute_dpdt::preprocess(
   fprintf(
     fid,
     "# cell %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e %.10e\n",
-    box.cpu_h[0], box.cpu_h[3], box.cpu_h[6],
-    box.cpu_h[1], box.cpu_h[4], box.cpu_h[7],
-    box.cpu_h[2], box.cpu_h[5], box.cpu_h[8]);
+    box.cpu_h[0],
+    box.cpu_h[3],
+    box.cpu_h[6],
+    box.cpu_h[1],
+    box.cpu_h[4],
+    box.cpu_h[7],
+    box.cpu_h[2],
+    box.cpu_h[5],
+    box.cpu_h[8]);
   fprintf(fid, "# dt_output %.10e fs\n", time_step * sample_interval * TIME_UNIT_CONVERSION);
   fprintf(fid, "# columns time_fs dpdt_x dpdt_y dpdt_z P_x P_y P_z\n");
   gpu_dpdt_per_atom.resize(3 * atom.number_of_atoms);
@@ -113,7 +122,7 @@ void Compute_dpdt::preprocess(
   p_integral_dt = time_step * sample_interval;
 }
 
-void Compute_dpdt::process(
+void Compute_dpdt::end_of_step(
   const int number_of_steps,
   int step,
   const int fixed_group,
@@ -131,7 +140,7 @@ void Compute_dpdt::process(
     return;
 
   const int N = atom.number_of_atoms;
-  GPU_Vector<float>& bec = force.potentials[0]->get_bec_reference();
+  GPU_Vector<float>& bec = force.get_potential(0).get_bec_reference();
   gpu_compute_dpdt<<<(N - 1) / 64 + 1, 64>>>(
     N,
     bec.data(),
@@ -150,20 +159,22 @@ void Compute_dpdt::process(
   gpu_dpdt_total.copy_to_host(cpu_dpdt_total.data());
   for (int d = 0; d < 3; ++d) {
     p_integral[d] += cpu_dpdt_total[d] * p_integral_dt; //  e A
-    cpu_dpdt_total[d] /= TIME_UNIT_CONVERSION; // e A / fs
+    cpu_dpdt_total[d] /= TIME_UNIT_CONVERSION;          // e A / fs
   }
-  fprintf(fid, "%15.8e %g %g %g %g %g %g\n", 
+  fprintf(
+    fid,
+    "%15.8e %g %g %g %g %g %g\n",
     p_integral_time,
-    cpu_dpdt_total[0], 
-    cpu_dpdt_total[1], 
-    cpu_dpdt_total[2], 
-    p_integral[0], 
-    p_integral[1], 
+    cpu_dpdt_total[0],
+    cpu_dpdt_total[1],
+    cpu_dpdt_total[2],
+    p_integral[0],
+    p_integral[1],
     p_integral[2]);
   fflush(fid);
 }
 
-void Compute_dpdt::postprocess(
+void Compute_dpdt::post_run(
   Atom& atom,
   Box& box,
   Integrate& integrate,
@@ -174,11 +185,12 @@ void Compute_dpdt::postprocess(
   fclose(fid);
 }
 
-void Compute_dpdt::parse(const char** param, int num_param)
+void Compute_dpdt::parse(const std::vector<std::string>& tokens, bool is_nep_charge)
 {
+  const int num_param = tokens.size();
   printf("Compute dp/dt.\n");
 
-  if (!check_is_nep_charge()) {
+  if (!is_nep_charge) {
     PRINT_INPUT_ERROR("cannot use compute_dpdt for a non-NEP-Charge model.\n");
   }
 
@@ -186,7 +198,7 @@ void Compute_dpdt::parse(const char** param, int num_param)
     PRINT_INPUT_ERROR("compute_dpdt should have 1 parameter.\n");
   }
 
-  if (!is_valid_int(param[1], &sample_interval)) {
+  if (!is_valid_int(tokens[1], &sample_interval)) {
     PRINT_INPUT_ERROR("sample interval for compute_dpdt should be an integer number.\n");
   }
   if (sample_interval <= 0) {
@@ -195,8 +207,8 @@ void Compute_dpdt::parse(const char** param, int num_param)
   printf("    sample interval is %d.\n", sample_interval);
 }
 
-Compute_dpdt::Compute_dpdt(const char** param, int num_param)
+Compute_dpdt::Compute_dpdt(const std::vector<std::string>& tokens, bool is_nep_charge)
 {
-  parse(param, num_param);
-  property_name = "compute_dpdt";
+  parse(tokens, is_nep_charge);
+  action_name = "compute_dpdt";
 }

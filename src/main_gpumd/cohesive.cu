@@ -2,33 +2,36 @@
     Copyright 2017 Zheyong Fan and GPUMD development team
     This file is part of GPUMD.
     GPUMD is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
+    it under the terms of the GNU Lesser General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
     GPUMD is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-    You should have received a copy of the GNU General Public License
-    along with GPUMD.  If not, see <http://www.gnu.org/licenses/>.
+    GNU Lesser General Public License for more details.
+    You should have received a copy of the GNU Lesser General Public License
+    along with GPUMD.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /*----------------------------------------------------------------------------80
 Compute the cohesive energy curve with different deformations.
+
+Major contributors:
+  Zheyong Fan: Initial implementation.
+  Benrui Tang: Full elastic tensor and directional cohesive-energy scans.
 ------------------------------------------------------------------------------*/
 
 #include "cohesive.cuh"
 #include "force/force.cuh"
 #include "minimize/minimize.cuh"
 #include "minimize/minimizer_sd.cuh"
-#include "model/box.cuh"
 #include "model/atom.cuh"
+#include "model/box.cuh"
 #include "model/group.cuh"
 #include "utilities/common.cuh"
 #include "utilities/error.cuh"
 #include "utilities/gpu_macro.cuh"
 #include "utilities/read_file.cuh"
-#include <cstring>
 
 static void __global__ deform_position(
   const int N,
@@ -98,23 +101,24 @@ void Cohesive::deform_box(
     new_position_per_atom.data() + N * 2);
 }
 
-void Cohesive::parse(const char** param, int num_param, int type)
+void Cohesive::parse(const std::vector<std::string>& tokens, int type)
 {
   if (type == 0) {
-    parse_cohesive(param, num_param);
+    parse_cohesive(tokens);
   } else if (type == 1) {
-    parse_elastic(param, num_param);
+    parse_elastic(tokens);
   }
 }
 
-void Cohesive::parse_cohesive(const char** param, int num_param)
+void Cohesive::parse_cohesive(const std::vector<std::string>& tokens)
 {
+  const int num_param = tokens.size();
   printf("Compute cohesive energy.\n");
   if (num_param != 4) {
     PRINT_INPUT_ERROR("compute_cohesive should have 3 parameters.\n");
   }
 
-  if (!is_valid_real(param[1], &start_factor)) {
+  if (!is_valid_real(tokens[1], &start_factor)) {
     PRINT_INPUT_ERROR("start_factor should be a number.\n");
   }
   if (start_factor <= 0) {
@@ -122,7 +126,7 @@ void Cohesive::parse_cohesive(const char** param, int num_param)
   }
   printf("    start_factor = %g.\n", start_factor);
 
-  if (!is_valid_real(param[2], &end_factor)) {
+  if (!is_valid_real(tokens[2], &end_factor)) {
     PRINT_INPUT_ERROR("end_factor should be a number.\n");
   }
   if (end_factor <= start_factor) {
@@ -130,7 +134,7 @@ void Cohesive::parse_cohesive(const char** param, int num_param)
   }
   printf("    end_factor = %g.\n", end_factor);
 
-  if (!is_valid_int(param[3], &deform_d)) {
+  if (!is_valid_int(tokens[3], &deform_d)) {
     PRINT_INPUT_ERROR("deform direction should be an integer.\n");
   }
   if (deform_d < 0 || deform_d > 6) {
@@ -139,8 +143,8 @@ void Cohesive::parse_cohesive(const char** param, int num_param)
   num_points = round((end_factor - start_factor) * 1000) + 1;
   printf("    num_points = %d.\n", num_points);
 
-  const char* deform_mode[] = {"uniaxial", "uniaxial", "uniaxial", 
-                               "biaxial", "biaxial", "biaxial", "triaxial"};
+  const char* deform_mode[] = {
+    "uniaxial", "uniaxial", "uniaxial", "biaxial", "biaxial", "biaxial", "triaxial"};
   const char* deform_dir[] = {"x", "y", "z", "xy", "yz", "xz", "xyz"};
   printf("    deform mode = %s - %s .\n", deform_mode[deform_d], deform_dir[deform_d]);
 
@@ -148,14 +152,15 @@ void Cohesive::parse_cohesive(const char** param, int num_param)
   deformation_type = 0; // deformation for cohesive
 }
 
-void Cohesive::parse_elastic(const char** param, int num_param)
+void Cohesive::parse_elastic(const std::vector<std::string>& tokens)
 {
+  const int num_param = tokens.size();
   printf("Compute elastic constants.\n");
   if (num_param != 2) {
     PRINT_INPUT_ERROR("compute_elastic should have 1 parameter.\n");
   }
 
-  if (!is_valid_real(param[1], &strain)) {
+  if (!is_valid_real(tokens[1], &strain)) {
     PRINT_INPUT_ERROR("strain should be a number.\n");
   }
   if (strain <= 0) {
@@ -342,11 +347,7 @@ void Cohesive::output(Box& box)
   fclose(fid);
 }
 
-void Cohesive::compute(
-  Box& box,
-  Atom& atom,
-  std::vector<Group>& group,
-  Force& force)
+void Cohesive::compute(Box& box, Atom& atom, std::vector<Group>& group, Force& force)
 {
   allocate_memory(atom.number_of_atoms);
   compute_D();

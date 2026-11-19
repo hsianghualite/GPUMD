@@ -33,6 +33,9 @@ class CommandIOCase:
     # distinct groups (move, which GPUMD refuses to run without a separate fixed group). calorine's
     # GPUNEP has no built-in way to attach groupings through run_custom_md, so this rewrites
     # model.xyz after GPUNEP's automatic write via calorine.gpumd.write_xyz's groupings param.
+    groupings: List = None  # passed straight to calorine.gpumd.write_xyz for the cases n_groups
+    # cannot express, currently only a grouping method with an empty group. Takes precedence over
+    # n_groups.
     ensemble: str = 'nve'
     ensemble_params: tuple = ()
     prelude_lines: List[Tuple] = field(default_factory=list)  # lines that must precede
@@ -58,8 +61,7 @@ class CommandIOCase:
 
 def run_command_io_case(tmp_path, atoms, model_path, model_type, gpumd_command, case):
     """Writes run.in (+ model.xyz with groupings if needed) for one CommandIOCase and executes
-    gpumd directly (mirroring the pattern in tests/gpumd/dump_dipole/test_dump_dipole.py),
-    rather than run_custom_md(..., only_prepare=False), since several cases need model.xyz
+    gpumd directly rather than run_custom_md(..., only_prepare=False), since several cases need model.xyz
     rewritten with group information after GPUNEP's automatic (group-less) write.
 
     Returns the completed subprocess (caller checks returncode and expected_output_files).
@@ -90,7 +92,9 @@ def run_command_io_case(tmp_path, atoms, model_path, model_type, gpumd_command, 
 
     calc.run_custom_md(params, only_prepare=True)
 
-    if case.n_groups == 1:
+    if case.groupings is not None:
+        write_xyz(str(tmp_path / 'model.xyz'), atoms, groupings=case.groupings)
+    elif case.n_groups == 1:
         write_xyz(str(tmp_path / 'model.xyz'), atoms, groupings=[[list(range(len(atoms)))]])
     elif case.n_groups == 2:
         half = len(atoms) // 2

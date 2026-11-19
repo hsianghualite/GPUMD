@@ -5,34 +5,42 @@
 :attr:`dump_polarizability`
 ===========================
 
-Predicts the polarizability for the current configuration of atoms during MD, using the second supplied NEP.
-The first potential should be a regular NEP potential model and is used to run the MD, whilst the second NEP should be a `nep*_polarizability` model.
+Predicts the polarizability for the current configuration of atoms during MD using a separate ``nep_polarizability`` model.
+The response model is read by this keyword and is independent of the potential used to run the MD.
 
 Syntax
 ------
 
 .. code::
 
-   dump_polarizability  <interval>
+   dump_polarizability <interval> <nep_file>
 
-:attr:`interval` parameter is the output interval (number of steps) for evaluating and writing the polarizability.
+Parameters
+----------
+
+:attr:`interval` parameter is a positive integer giving the output interval (number of steps) for evaluating and writing the polarizability.
+
+:attr:`nep_file` is a :ref:`NEP model file <nep_txt>` with ``model nep_polarizability``.
+
+Output
+------
+
+The time step and predicted polarizability are written to :ref:`polarizability.out <gpumd_polarizability_out>`.
 
 Examples
 --------
 
 Example 1
 ^^^^^^^^^
-To use one NEP potential to propagate the MD (`nep0`), and another (`nep1`) to compute and write the polarizability every 100 steps, write::
+To use `nep.txt` to propagate the MD and `nep_polarizability.txt` to compute and write the polarizability every 100 steps, write::
 
-  potential nep0
-  potential nep1  
+  potential nep.txt
   ...
-  dump_polarizability 100
+  dump_polarizability 100 nep_polarizability.txt
 
-before the :ref:`run keyword <kw_run>`. This will generate a `polarizability.out` output files containing the time step and predicted polarizability at that time step.
+before the :ref:`run keyword <kw_run>`. This will generate a `polarizability.out` output file containing the time step and predicted polarizability at that time step.
 
+Notes
+-----
 
-Caveats
--------
-* This keyword is not propagating.
-  That means, its effect will not be passed from one run to the next.
+* Repeat this command before each run that needs it.
